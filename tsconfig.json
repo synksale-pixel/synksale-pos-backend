@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    /* Base Options */
+    "target": "ES2022" /* Specify ECMAScript target version */,
+    "module": "CommonJS" /* Specify module code generation */,
+    "moduleResolution": "bundler" /* Resolve modules using Node.js style */,
+    "lib": [
+      "ES2022"
+    ] /* Specify library files to be included in the compilation */,
+
+    /* Directories and Paths */
+    "rootDir": "./src" /* Specify the root folder of input files */,
+    "outDir": "./dist" /* Redirect output structure to the directory */,
+    "baseUrl": "./" /* Base directory to resolve non-absolute module names */,
+    "ignoreDeprecations": "6.0" /* Silence deprecation errors for TypeScript 6.x */,
+    "paths": {
+      "@/*": ["src/*"] /* Set path aliases for cleaner imports */
+    },
+
+    /* Strict Type-Checking Options */
+    "strict": true /* Enable all strict type-checking options */,
+    "noImplicitAny": true /* Raise error on expressions and declarations with an implied 'any' type */,
+    "strictNullChecks": true /* Enable strict null checks */,
+    "strictFunctionTypes": true /* Enable strict checking of function types */,
+    "noImplicitThis": true /* Raise error on 'this' expressions with an implied 'any' type */,
+    "alwaysStrict": true /* Parse in strict mode and emit "use strict" for each source file */,
+
+    /* Additional Checks */
+    "noUnusedLocals": true /* Report errors on unused locals */,
+    "noUnusedParameters": true /* Report errors on unused parameters */,
+    "noImplicitReturns": true /* Report error when not all code paths in function return a value */,
+    "noFallthroughCasesInSwitch": true /* Report errors for fallthrough cases in switch statement */,
+
+    /* Module Resolution Options */
+    "esModuleInterop": true /* Enables emit interoperability between CommonJS and ES Modules */,
+    "skipLibCheck": true /* Skip type checking of declaration files */,
+    "forceConsistentCasingInFileNames": true /* Disallow inconsistently-casing references to the same file */,
+    "resolveJsonModule": true /* Include modules imported with '.json' extension */,
+    "sourceMap": true /* Generates corresponding '.map' file for debugging */
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "**/*.spec.ts"]
+}
