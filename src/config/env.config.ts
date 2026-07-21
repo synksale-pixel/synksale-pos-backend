@@ -8,17 +8,17 @@ import { z } from "zod";
  */
 const nodeEnv = process.env.NODE_ENV || "development";
 
-const envFile = 
+const envFile =
   nodeEnv === "test"
-    ? ".env.test"
+    ? ".env.test.local"
     : nodeEnv === "development"
-      ? ".env.development"
+      ? ".env.development.local"
       : ".env";
 
 // Resolve full absolute path to the targeted env file and configure dotenv
 dotenv.config({ path: path.resolve(process.cwd(), envFile) });
 
-/** 
+/**
  * Zod Schema for Environment Variables validation.
  * This guarantees strict checking:
  *  - PORT: Coerced into a number, defaults to 3000 if absent.
@@ -35,6 +35,14 @@ const envSchema = z.object({
     .string()
     .url({ message: "MONGO_URI must be a valid connection URL." }),
   CORS_ORIGIN: z.string().default("*"),
+  JWT_ACCESS_SECRET: z.string().min(32, {
+    message: "JWT_ACCESS_SECRET must be at least 32 characters long.",
+  }),
+  JWT_ACCESS_EXPIRY: z.string().default("15m"),
+  JWT_REFRESH_SECRET: z.string().min(32, {
+    message: "JWT_REFRESH_SECRET must be at least 32 characters long.",
+  }),
+  JWT_REFRESH_EXPIRY: z.string().default("7d"),
 });
 
 // Perform validation against the global process.env object

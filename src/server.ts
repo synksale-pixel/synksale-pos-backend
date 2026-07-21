@@ -48,9 +48,9 @@ async function startServer(): Promise<void> {
     );
     console.error(error.name, error.message);
     console.error(error.stack);
- 
+
     // Shut down server gracefully with exit code 1 (error state)
-    gracefulShutdown(1); 
+    gracefulShutdown(1);
   });
 }
 

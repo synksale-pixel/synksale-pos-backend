@@ -1,9 +1,10 @@
 {
   "compilerOptions": {
     /* Base Options */
+    "ignoreDeprecations": "6.0" /* Silence deprecation warnings for TypeScript 6.0 */,
     "target": "ES2022" /* Specify ECMAScript target version */,
     "module": "CommonJS" /* Specify module code generation */,
-    "moduleResolution": "bundler" /* Resolve modules using Node.js style */,
+    "moduleResolution": "node" /* Resolve modules using Node.js style */,
     "lib": [
       "ES2022"
     ] /* Specify library files to be included in the compilation */,
@@ -12,7 +13,6 @@
     "rootDir": "./src" /* Specify the root folder of input files */,
     "outDir": "./dist" /* Redirect output structure to the directory */,
     "baseUrl": "./" /* Base directory to resolve non-absolute module names */,
-    "ignoreDeprecations": "6.0" /* Silence deprecation errors for TypeScript 6.x */,
     "paths": {
       "@/*": ["src/*"] /* Set path aliases for cleaner imports */
     },
