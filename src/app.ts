@@ -1,9 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import express, { Request, Response, NextFunction } from "express";
+import express, { Request, Response } from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { env } from "./config/env.config";
-import { ApiError } from "./utils";
+import requestLogger from "./middleware/requestLogger.middleware";
+import {
+  notFoundHandler,
+  globalErrorHandler,
+} from "./middleware/errorHandler.middleware";
 
 // Initialize the Express application
 const app = express();
@@ -30,6 +33,9 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
+// Request logging middleware - piped to Winston (early registration is crucial to profile all requests)
+app.use(requestLogger);
+
 /**
  * Core Application Routes
  */
@@ -44,53 +50,12 @@ app.get("/health", (_req: Request, res: Response) => {
   });
 });
 
-/**
- * 404 Fallback Route Handler
- * Intercepts requests that do not match any defined HTTP endpoint
- */
-app.use((_req: Request, res: Response) => {
-  res.status(404).json({
-    success: false,
-    error: {
-      message: "The requested API endpoint was not found on this server.",
-      code: "API_ENDPOINT_NOT_FOUND",
-    },
-  });
-});
+// ===== Error Handling (MUST be registered last) =====
 
-/**
- * Centralized Global Error Handler Middleware
- * Catches all asynchronous and synchronous unhandled exceptions thrown across routes.
- */
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  // Log the full error internally for server analysis
-  console.error("🔥 Critical App Error:", err);
+// 404 Fallback Route Handler - intercepts unmatched HTTP endpoints and forwards to globalErrorHandler
+app.use(notFoundHandler);
 
-  // Handle custom ApiError instances
-  if (err instanceof ApiError) {
-    return res.status(err.statusCode).json({
-      success: err.success,
-      statusCode: err.statusCode,
-      message: err.message,
-      errors: err.errors,
-      // Do not leak stack traces in production to mitigate system footprint exposure
-      ...(env.NODE_ENV === "development" && { stack: err.stack }),
-    });
-  }
-
-  // Handle generic system/npm errors
-  const statusCode = (err as any).statusCode || 500;
-  const message = err.message || "A critical server error occurred.";
-
-  return res.status(statusCode).json({
-    success: false,
-    error: {
-      message,
-      code: (err as any).code || "INTERNAL_SERVER_ERROR",
-      // Do not leak stack traces in production to mitigate system footprint exposure
-      ...(env.NODE_ENV === "development" && { stack: err.stack }),
-    },
-  });
-});
+// Centralized Global Error Handler Middleware - processes, logs, and responds to all thrown errors
+app.use(globalErrorHandler);
 
 export default app;

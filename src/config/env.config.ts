@@ -16,7 +16,15 @@ const envFile =
       : ".env";
 
 // Resolve full absolute path to the targeted env file and configure dotenv
-dotenv.config({ path: path.resolve(process.cwd(), envFile) });
+const dotenvResult = dotenv.config({
+  path: path.resolve(process.cwd(), envFile),
+});
+if (dotenvResult.error) {
+  console.warn(
+    `⚠️ Warning: Could not load environment file ${envFile}:`,
+    dotenvResult.error.message
+  );
+}
 
 /**
  * Zod Schema for Environment Variables validation.
@@ -43,6 +51,16 @@ const envSchema = z.object({
     message: "JWT_REFRESH_SECRET must be at least 32 characters long.",
   }),
   JWT_REFRESH_EXPIRY: z.string().default("7d"),
+  LOG_LEVEL: z
+    .enum(["error", "warn", "info", "http", "debug"])
+    .default(process.env.NODE_ENV === "production" ? "info" : "debug"),
+  LOG_TO_FILE: z
+    .preprocess((val) => {
+      if (val === "true" || val === "1") return true;
+      if (val === "false" || val === "0") return false;
+      return val;
+    }, z.boolean())
+    .default(process.env.NODE_ENV === "production"),
 });
 
 // Perform validation against the global process.env object
@@ -57,6 +75,8 @@ if (!parsedEnv.success) {
   // Shutdown process immediately. Running with bad configurations in production is high risk.
   process.exit(1);
 }
+
+console.log(`✅ Environment variables loaded successfully from ${envFile}`);
 
 /**
  * Strictly-typed parsed environment object.
