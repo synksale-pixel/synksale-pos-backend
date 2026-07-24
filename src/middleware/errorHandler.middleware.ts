@@ -5,7 +5,7 @@
  */
 
 import { Request, Response, NextFunction } from "express";
-import { ApiError } from "../utils/ApiError";
+import { ApiError, getRequestContext } from "../utils";
 import { env } from "../config/env.config";
 import logger from "../config/logger.config";
 
@@ -184,8 +184,10 @@ export const globalErrorHandler = (
     storeId?: string;
   };
   const sanitizedBody = req.body ? redact(req.body) : undefined;
+  const requestId = req.id || getRequestContext()?.requestId;
 
   const logMetadata = {
+    requestId,
     method: req.method,
     url: req.originalUrl,
     userId: extendedReq.user?.id || extendedReq.userId,
@@ -210,6 +212,7 @@ export const globalErrorHandler = (
     success: error.success,
     statusCode: error.statusCode,
     message: error.message,
+    requestId,
     errors: error.errors,
     ...(env.NODE_ENV === "development" && { stack: error.stack }),
   });

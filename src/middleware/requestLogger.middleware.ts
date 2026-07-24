@@ -11,6 +11,7 @@ import logger from "../config/logger.config";
  * Interface representing the structured metadata extracted from each HTTP request.
  */
 interface RequestLogMetadata {
+  requestId: string | undefined;
   method: string | undefined;
   url: string | undefined;
   status: number;
@@ -36,6 +37,7 @@ export const requestLogger = morgan(
     };
 
     const metadata: RequestLogMetadata = {
+      requestId: req.id || undefined,
       method: tokens.method(req, res),
       url: tokens.url(req, res),
       status: Number(tokens.status(req, res)) || 0,
