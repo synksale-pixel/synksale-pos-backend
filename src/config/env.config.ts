@@ -34,34 +34,67 @@ if (dotenvResult.error) {
  *  - MONGO_URI: Must be a valid URI.
  *  - CORS_ORIGIN: Defaults to '*' (broad access) but configurable.
  */
-const envSchema = z.object({
-  PORT: z.coerce.number().default(3000),
-  NODE_ENV: z
-    .enum(["development", "production", "test"])
-    .default("development"),
-  MONGO_URI: z
-    .string()
-    .url({ message: "MONGO_URI must be a valid connection URL." }),
-  CORS_ORIGIN: z.string().default("*"),
-  JWT_ACCESS_SECRET: z.string().min(32, {
-    message: "JWT_ACCESS_SECRET must be at least 32 characters long.",
-  }),
-  JWT_ACCESS_EXPIRY: z.string().default("15m"),
-  JWT_REFRESH_SECRET: z.string().min(32, {
-    message: "JWT_REFRESH_SECRET must be at least 32 characters long.",
-  }),
-  JWT_REFRESH_EXPIRY: z.string().default("7d"),
-  LOG_LEVEL: z
-    .enum(["error", "warn", "info", "http", "debug"])
-    .default(process.env.NODE_ENV === "production" ? "info" : "debug"),
-  LOG_TO_FILE: z
-    .preprocess((val) => {
-      if (val === "true" || val === "1") return true;
-      if (val === "false" || val === "0") return false;
-      return val;
-    }, z.boolean())
-    .default(process.env.NODE_ENV === "production"),
-});
+const envSchema = z
+  .object({
+    // ===== App Config =====
+    PORT: z.coerce.number().default(3000),
+    NODE_ENV: z
+      .enum(["development", "production", "test"])
+      .default("development"),
+    MONGO_URI: z
+      .string()
+      .url({ message: "MONGO_URI must be a valid connection URL." }),
+    CORS_ORIGIN: z.string().default("*"),
+
+    // ===== JWT Config =====
+    // JWT_ACCESS_SECRET must be at least 32 characters long for proper security strength.
+    // Short secrets make HMAC tokens vulnerable to brute-force or precomputation attacks.
+    JWT_ACCESS_SECRET: z.string().min(32, {
+      message: "JWT_ACCESS_SECRET must be at least 32 characters long.",
+    }),
+    JWT_ACCESS_EXPIRY: z.string().default("15m"),
+    // JWT_REFRESH_SECRET must be different from JWT_ACCESS_SECRET. If an access key is leaked,
+    // refresh tokens are still secure because they are signed/validated with a different secret.
+    JWT_REFRESH_SECRET: z.string().min(32, {
+      message: "JWT_REFRESH_SECRET must be at least 32 characters long.",
+    }),
+    JWT_REFRESH_EXPIRY: z.string().default("7d"),
+
+    // ===== API Config =====
+    API_VERSION: z.string().default("v1"),
+
+    // ===== Feature Flags =====
+    FEATURE_MULTI_CURRENCY: z
+      .preprocess((val) => {
+        if (val === "true" || val === "1") return true;
+        if (val === "false" || val === "0") return false;
+        return val;
+      }, z.boolean())
+      .default(false),
+    FEATURE_ADVANCED_TAX_RULES: z
+      .preprocess((val) => {
+        if (val === "true" || val === "1") return true;
+        if (val === "false" || val === "0") return false;
+        return val;
+      }, z.boolean())
+      .default(false),
+
+    // ===== Logging Configuration =====
+    LOG_LEVEL: z
+      .enum(["error", "warn", "info", "http", "debug"])
+      .default(process.env.NODE_ENV === "production" ? "info" : "debug"),
+    LOG_TO_FILE: z
+      .preprocess((val) => {
+        if (val === "true" || val === "1") return true;
+        if (val === "false" || val === "0") return false;
+        return val;
+      }, z.boolean())
+      .default(process.env.NODE_ENV === "production"),
+  })
+  .refine((data) => data.JWT_ACCESS_SECRET !== data.JWT_REFRESH_SECRET, {
+    message: "JWT_REFRESH_SECRET must be different from JWT_ACCESS_SECRET.",
+    path: ["JWT_REFRESH_SECRET"],
+  });
 
 // Perform validation against the global process.env object
 const parsedEnv = envSchema.safeParse(process.env);

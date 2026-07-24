@@ -7,6 +7,7 @@
 import winston from "winston";
 import path from "path";
 import { env } from "./env.config";
+import { getRequestContext } from "../utils";
 
 // Define standard npm log levels to ensure consistency across environments
 const levels = {
@@ -17,6 +18,17 @@ const levels = {
   debug: 4,
 };
 
+// Winston format to dynamically inject the request ID from AsyncLocalStorage context into log metadata
+const addRequestId = winston.format((info) => {
+  if (!info.requestId) {
+    const context = getRequestContext();
+    if (context?.requestId) {
+      info.requestId = context.requestId;
+    }
+  }
+  return info;
+});
+
 /**
  * Format for development environments:
  * - Colorized for terminal visibility.
@@ -24,11 +36,16 @@ const levels = {
  * - Clean text formatting showcasing the message and optional metadata.
  */
 const devFormat = winston.format.combine(
+  addRequestId(),
   winston.format.colorize({ all: true }),
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.errors({ stack: true }), // Automatically extracts stack trace from Error objects
-  winston.format.printf(({ timestamp, level, message, stack, ...metadata }) => {
-    let logMessage = `[${timestamp}] [${level}]: ${message}`;
+  winston.format.printf(({ timestamp, level, message, stack, requestId, ...metadata }) => {
+    let logMessage = `[${timestamp}] [${level}]`;
+    if (requestId) {
+      logMessage += ` [req-id: ${requestId}]`;
+    }
+    logMessage += `: ${message}`;
     if (stack) {
       logMessage += `\nStack Trace:\n${stack}`;
     } else if (Object.keys(metadata).length > 0) {
@@ -45,6 +62,7 @@ const devFormat = winston.format.combine(
  * - ISO timestamp format.
  */
 const prodFormat = winston.format.combine(
+  addRequestId(),
   winston.format.timestamp(),
   winston.format.errors({ stack: true }), // Ensures errors logged in production capture full stack traces
   winston.format.json()
