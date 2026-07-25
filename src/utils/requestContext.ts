@@ -12,9 +12,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 export interface RequestContext {
   requestId: string;
-  // organizationId?: string;  <- will be added when multi-tenancy is built, leave this comment as a marker
-  // storeId?: string;
-  // userId?: string;
+  organizationId?: string;
+  storeId?: string;
+  userId?: string;
 }
 
 // Global AsyncLocalStorage instance to track async context
