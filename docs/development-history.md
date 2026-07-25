@@ -79,3 +79,117 @@ This document tracks the initial setup phase, completed features, structural dec
 - **Failsafe Global Handler:**
   - Catches route failures, JSON parsing crashes, mongoose cast/validation issues, and duplicate key errors.
   - Sanitizes stack trace information so development details are not leaked in production mode.
+
+---
+
+## 🔑 Dynamic RBAC & Multi-Tenancy Architecture
+
+We transitioned the backend from basic static role enumerations to a **Dynamic RBAC (Role-Based Access Control) & Multi-Tenant SaaS** design. This allows tenants (Organizations) to define, configure, and modify their own roles and permissions dynamically without changing code.
+
+### 1. Architecture & Design Decisions
+- **Static Vocabulary:** Action permissions (e.g., `sale:create`, `product:delete`) are defined in code as a fixed permission catalog. Developers write checks against these keys.
+- **Dynamic Configuration:** Roles are stored in the database. Their scopes and permissions arrays can be edited per organization dynamically.
+- **Tenant Separation:** Core data isolation ensures data cannot leak between tenants (Organizations) and sub-tenants (Stores) automatically.
+
+---
+
+### 2. Component-by-Component Walkthrough
+
+#### 📂 Part 1: The Permission Catalog (`permissions.catalog.ts`)
+Defines the absolute vocabulary of actions inside the platform.
+- **PermissionKey:** Union type of all valid system operations.
+- **PermissionDefinition:** Structured catalog with category-scoped keys:
+  - **Sales:** `sale:create`, `sale:void`, `sale:refund`
+  - **Catalog:** `product:create`, `product:read`, `product:update`, `product:delete`
+  - **Inventory:** `inventory:adjust`, `inventory:transfer`
+  - **Reports:** `report:view_store`, `report:view_org`
+  - **Admin:** `user:invite`, `user:manage_roles`, `role:manage`, `store:create`, `store:configure`, `organization:configure`
+- **Type Guard:** `isValidPermission(key: string): key is PermissionKey` is exported to reject invalid permissions at the database validation layer.
+
+#### 📂 Part 2: Database Models (with Tenant Scoping & Soft Delete)
+
+- **Organization Model (`organization.model.ts`):**
+  - Represents a corporate tenant.
+  - Features a unique lowercase `slug` (indexed for subdomain routing), validation for `contactEmail`, tenant status control (`isActive`), and settings configuration (e.g., default currency, timezone).
+- **Store Model (`store.model.ts`):**
+  - Represents physical store locations under an Organization.
+  - References `organizationId` and holds fields like `code` (e.g., `STR-001`), `address`, and `timezone`.
+  - Implements a compound unique index on `{ organizationId: 1, code: 1 }` ensuring store codes are unique per organization, while letting different tenants reuse codes.
+- **Role Model (`role.model.ts`):**
+  - Stores dynamic permissions arrays.
+  - References `organizationId` (nullable for platform-wide roles).
+  - Scope options: `platform`, `organization`, or `store`.
+  - Protects system defaults from deletion via `isSystemRole` flag.
+  - Implements a compound unique index on `{ organizationId: 1, slug: 1 }` to guarantee unique roles within the tenant workspace.
+- **User Model (`user.model.ts`):**
+  - References `organizationId` with a scoped unique index on `{ organizationId: 1, email: 1 }` allowing users to reuse their emails across different organizations.
+  - Keeps credentials secure by marking `passwordHash` as `select: false`.
+  - Maps to an organization role (`orgRoleId`) and an array of store-specific roles (`storeAccess: Array<{ storeId, roleId }>`).
+  - Stores SHA-256 hashes of `refreshTokens` (with IP & UserAgent) to secure refresh flows at rest.
+  - Includes a platform operator flag `isSuperAdmin` to bypass RBAC checks entirely.
+
+#### 📂 Part 3: Tenant Scoping & Soft Delete Plugin (`tenantScope.plugin.ts`)
+Serves as an automatic defense-in-depth isolation boundary at the database driver level.
+- **Auto-Injection:** Injects `isDelete`, `organizationId`, and `storeId` schema paths dynamically.
+- **Scoping Hooks:** Intercepts Mongoose query methods (like `find`, `findOne`, `countDocuments`, `update`, `delete`).
+- **Context Enforcer:** Reads tenant IDs from `AsyncLocalStorage` and automatically overlays them on active queries.
+- **Soft Delete filter:** Automatically appends `{ isDelete: { $ne: true } }` unless explicitly overridden.
+- **Migration/Seed Bypass:** Disables filters gracefully if request context is unavailable (e.g., during startup seed runs).
+
+#### 📂 Part 4: Token Authentication Service (`auth.service.ts`)
+- **generateAccessToken(payload):** Signs short-lived access JWTs containing `userId`, `organizationId`, and `isSuperAdmin`.
+- **generateRefreshToken():** Generates cryptographically secure, opaque random tokens, returning the raw token to the client and storing a secure SHA-256 hash in the database.
+- **verifyAccessToken(token):** Verifies access token signatures and throws standard 401 `ApiError` instances on expired or malformed tokens.
+
+#### 📂 Part 5: Effective Permissions Resolution (`permission.service.ts`)
+- **getEffectivePermissions(user, storeId):** Computes the union of org-level permissions and active store-level permissions based on request context. Returns `['*']` for Super Admins.
+- **canGrantRole(grantorPerms, grantorScope, targetRole):** Prevents privilege escalation. Grantors cannot create or assign roles with higher scopes, or assign permissions they do not possess.
+
+#### 📂 Part 6: Authorization Middleware Chain (`rbac.middleware.ts`)
+- **authenticate:** Resolves `Authorization` headers, verifies access, and binds `userId`/`organizationId` in AsyncLocalStorage.
+- **scopeToStore:** Resolves `storeId` from parameters, body, or query. Verifies user access, then injects `storeId` into the active context.
+- **authorize(permission):** Evaluates dynamic permissions against the current user/store context, checking for either exact permission key matches or the wildcard (`*`) bypass.
+
+#### 📂 Part 7: Default Roles Provisioning (`roleSeed.service.ts`)
+Seeds default templates automatically on tenant creation:
+- `org_admin`: All organization and store-level scopes.
+- `store_manager`: Sales, inventory adjustment, and catalog management.
+- `cashier`: Basic checkout (`sale:create`, `product:read`, `report:view_store`).
+- `accountant`: Organizational finances (`report:view_org`, `sale:refund`).
+- `inventory_clerk`: Catalog reading and inventory adjustments.
+
+---
+
+### 3. How Multi-Tenant Context Flows
+The sequence diagram below displays how the authentication, context bindings, and database drivers interact when a request is made:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Router as Express Router
+    participant AuthMW as authenticate MW
+    participant StoreMW as scopeToStore MW
+    participant AuthzMW as authorize MW
+    participant DB as MongoDB (Mongoose)
+
+    Client->>Router: GET /api/v1/sales?storeId=STORE_123 (Header: Bearer Token)
+    Note over Router: Context initialized with RequestId
+    Router->>AuthMW: Execute
+    AuthMW->>DB: Fetch User & populate role
+    DB-->>AuthMW: User document
+    Note over AuthMW: Injects userId & orgId into RequestContext
+    AuthMW->>StoreMW: next()
+    StoreMW->>StoreMW: Check if User has access to STORE_123
+    Note over StoreMW: Injects storeId into RequestContext
+    StoreMW->>AuthzMW: next()
+    Note over AuthzMW: Resolve effective permissions
+    Note over AuthzMW: Check if 'sale:create' is in permissions list
+    AuthzMW->>Router: next() (Controller runs)
+    Router->>DB: Store.find() / Sale.find()
+    Note over DB: tenantScopePlugin intercepts query filter<br/>Injects { organizationId: ORG_ID, storeId: STORE_123, isDelete: false }
+    DB-->>Router: Isolated tenant documents
+    Router-->>Client: 200 OK (ApiResponse)
+```
+
+---

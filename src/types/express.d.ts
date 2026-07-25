@@ -1,12 +1,10 @@
-/**
- * Purpose: Declaration merging to extend the Express Request namespace.
- * Adds custom attributes (like id) to standard Express request objects.
- */
+import { UserDocument } from "../models/user.model";
 
 declare global {
   namespace Express {
     interface Request {
       id?: string;
+      user?: UserDocument;
     }
   }
 }

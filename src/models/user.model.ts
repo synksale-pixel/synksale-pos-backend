@@ -1,49 +1,47 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Purpose: User model definition.
+ * Represents physical users who log into the POS system.
+ * Supports multi-store access, hashed refresh tokens at rest, and dynamic RBAC roles.
+ */
+
 import mongoose, { Schema, Document } from "mongoose";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { env } from "../config/env.config";
 
-/**
- * Enumeration representing the user roles within the POS system.
- * Enforcing role types at the compiler level ensures security and type safety.
- */
-export enum UserRole {
-  SUPER_ADMIN = "SUPER_ADMIN",
-  STORE_ADMIN = "STORE_ADMIN",
-  MANAGER = "MANAGER",
-  CASHIER = "CASHIER",
-  INVENTORY_MANAGER = "INVENTORY_MANAGER",
-  ACCOUNTANT = "ACCOUNTANT",
+export interface IRefreshToken {
+  token: string; // SHA-256 hashed refresh token
+  createdAt: Date;
+  expiresAt: Date;
+  userAgent?: string;
+  ipAddress?: string;
 }
 
-/**
- * Interface representing the structure of a User document in MongoDB.
- */
+export interface IStoreAccess {
+  storeId: mongoose.Types.ObjectId;
+  roleId: mongoose.Types.ObjectId;
+}
+
 export interface IUser {
-  username: string;
+  organizationId: mongoose.Types.ObjectId;
   email: string;
-  password?: string;
-  role: UserRole;
+  passwordHash: string;
+  firstName: string;
+  lastName: string;
+  isSuperAdmin: boolean;
+  orgRoleId: mongoose.Types.ObjectId | null;
+  storeAccess: IStoreAccess[];
+  refreshTokens: IRefreshToken[];
   isActive: boolean;
-  store: mongoose.Types.ObjectId | null;
-  lastLogin: Date | null;
+  isDelete: boolean;
+  lastLoginAt: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
-/**
- * Interface representing the custom instance methods of a User document.
- * This guarantees type safety when invoking custom helper methods on a User instance.
- */
 export interface IUserMethods {
   comparePassword(candidatePassword: string): Promise<boolean>;
-  generateAccessToken(): string;
-  generateRefreshToken(): string;
 }
 
-/**
- * Type representing a fully qualified Mongoose User Document, combining base fields and custom methods.
- */
 export type UserDocument = Document<
   mongoose.Types.ObjectId,
   Record<string, never>,
@@ -52,94 +50,129 @@ export type UserDocument = Document<
   IUser &
   IUserMethods;
 
-/**
- * Type representing the Mongoose User Model.
- */
 export type UserModel = mongoose.Model<
   IUser,
   Record<string, never>,
   IUserMethods
 >;
 
-const userSchema = new Schema<IUser, UserModel, IUserMethods>(
+const refreshTokenSchema = new Schema<IRefreshToken>({
+  token: {
+    type: String,
+    required: true,
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+  expiresAt: {
+    type: Date,
+    required: true,
+  },
+  userAgent: String,
+  ipAddress: String,
+});
+
+const storeAccessSchema = new Schema<IStoreAccess>({
+  storeId: {
+    type: Schema.Types.ObjectId,
+    ref: "Store",
+    required: [true, "Store reference is required"],
+  },
+  roleId: {
+    type: Schema.Types.ObjectId,
+    ref: "Role",
+    required: [true, "Role reference is required"],
+  },
+});
+
+const userSchema = new Schema<
+  IUser,
+  UserModel,
+  Record<string, never>,
+  IUserMethods
+>(
   {
-    username: {
-      type: String,
-      required: [true, "Username is required"],
-      unique: true,
-      trim: true,
-      lowercase: true, // Force lowercase to avoid duplicate usernames (e.g. 'Admin' vs 'admin')
-      minlength: [3, "Username must be at least 3 characters"],
-      maxlength: [30, "Username cannot exceed 30 characters"],
-      index: true, // Speeds up search queries and login checks
+    organizationId: {
+      type: Schema.Types.ObjectId,
+      ref: "Organization",
+      required: [true, "Organization reference is required"],
+      index: true, // Speeds up scoping users by organization
     },
     email: {
       type: String,
       required: [true, "Email is required"],
-      unique: true,
       lowercase: true,
       trim: true,
-      match: [/^\S+@\S+\.\S+$/, "Please provide a valid email"],
-      index: true, // Speeds up search queries and login checks
+      index: true,
     },
-    password: {
+    passwordHash: {
       type: String,
-      required: [true, "Password is required"],
-      minlength: [4, "Password must be at least 4 characters"],
-      select: false, // Prevents leakage by omitting password from queries by default
-      validate: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        validator: function (this: any, value: string): boolean {
-          // Verify that password contains only numbers for SUPER_ADMIN and STORE_ADMIN (PIN format)
-          // For other roles, alphanumeric passwords are valid.
-          const role = this ? this.role : null;
-          if (role === UserRole.SUPER_ADMIN || role === UserRole.STORE_ADMIN) {
-            return /^\d+$/.test(value);
-          }
-          return true;
-        },
-        message:
-          "Super admin and store admin passwords must contain only numbers (PIN format)",
-      },
+      required: [true, "Password hash is required"],
+      select: false, // Ensures password hash is never leaked by default in queries
     },
-    role: {
+    firstName: {
       type: String,
-      enum: Object.values(UserRole),
-      default: UserRole.CASHIER,
+      required: [true, "First name is required"],
+      trim: true,
     },
+    lastName: {
+      type: String,
+      required: [true, "Last name is required"],
+      trim: true,
+    },
+    isSuperAdmin: {
+      type: Boolean,
+      default: false, // Platform-level bypass flag (intentionally separate from the dynamic Role system)
+    },
+    orgRoleId: {
+      type: Schema.Types.ObjectId,
+      ref: "Role",
+      default: null, // Scoped to organization-wide permissions (e.g. Org Admin)
+    },
+    storeAccess: [storeAccessSchema], // Array of store-specific roles (supports multi-store staff)
+    refreshTokens: [refreshTokenSchema], // Supports multi-device login sessions
     isActive: {
       type: Boolean,
       default: true,
-      index: true, // Speeds up filtering for active users in middleware checks
+      index: true, // Quick checks to verify active user status during auth
     },
-    store: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Store",
-      default: null,
-      index: true, // Crucial for multi-tenant POS filtering (scoping users by store)
+    isDelete: {
+      type: Boolean,
+      default: false,
+      index: true, // Supports soft delete
     },
-    lastLogin: {
+    lastLoginAt: {
       type: Date,
       default: null,
     },
   },
   {
-    timestamps: true, // Automatically populates and updates createdAt & updatedAt
+    timestamps: true,
   }
 );
+
+/**
+ * Compound Unique Index: { organizationId: 1, email: 1 }
+ * Why: Allows the same email address to hold separate accounts across different organizations
+ * (a judgment call to support multi-tenant structure). If global uniqueness is required instead,
+ * this would be a global index. Within a single organization, email addresses must be unique.
+ */
+userSchema.index({ organizationId: 1, email: 1 }, { unique: true });
 
 // ==========================================
 // Pre-save Hooks
 // ==========================================
 
-// Hash password before saving
+// Hash passwordHash before saving if it has been modified
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password") || !this.password) {
+  if (!this.isModified("passwordHash")) {
     return next();
   }
   try {
+    // 10 rounds is an industry standard offering a good balance of safety and computational cost
     const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
+    this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
     next();
   } catch (error) {
     next(error as Error);
@@ -147,72 +180,40 @@ userSchema.pre("save", async function (next) {
 });
 
 // ==========================================
+// Pre-query Hooks (Soft Delete Filter)
+// ==========================================
+userSchema.pre(/^find|countDocuments/, function (this: any, next) {
+  const filter = this.getFilter();
+  if (filter.isDelete === undefined) {
+    filter.isDelete = { $ne: true };
+  }
+  next();
+});
+
+// ==========================================
 // Instance Methods
 // ==========================================
 
 /**
- * Compares a candidate password against the user's hashed password.
- * Catches case where password field is unselected (select: false).
+ * Compares candidate password against the user's stored password hash.
  */
 userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
-  if (!this.password) {
+  if (!this.passwordHash) {
     throw new Error(
-      "Password field not loaded. Please select password in query."
+      "Password hash not loaded. Please select passwordHash in your query explicitly."
     );
   }
-  return bcrypt.compare(candidatePassword, this.password);
-};
-
-/**
- * Generates a signed JWT Access Token for the user.
- */
-userSchema.methods.generateAccessToken = function (): string {
-  const payload: {
-    id: mongoose.Types.ObjectId;
-    email: string;
-    role: UserRole;
-    storeId?: string;
-  } = {
-    id: this._id as mongoose.Types.ObjectId,
-    email: this.email,
-    role: this.role,
-  };
-
-  // Add storeId for tenant contexts (non-super-admins)
-  if (this.role !== UserRole.SUPER_ADMIN && this.store) {
-    payload.storeId = this.store.toString();
-  }
-
-  return jwt.sign(payload, env.JWT_ACCESS_SECRET, {
-    expiresIn: env.JWT_ACCESS_EXPIRY as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-  });
-};
-
-/**
- * Generates a signed JWT Refresh Token for the user.
- */
-userSchema.methods.generateRefreshToken = function (): string {
-  return jwt.sign(
-    {
-      id: this._id,
-    },
-    env.JWT_REFRESH_SECRET,
-    {
-      expiresIn: env.JWT_REFRESH_EXPIRY as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-    }
-  );
+  return bcrypt.compare(candidatePassword, this.passwordHash);
 };
 
 // ==========================================
 // Schema Options & Transforms
 // ==========================================
-
-// Configure output formatting to remove sensitive information during JSON serialization
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const cleanTransform = (_doc: any, ret: any) => {
-  delete ret.password;
+  delete ret.passwordHash;
+  delete ret.refreshTokens;
   delete ret.__v;
   return ret;
 };
@@ -227,6 +228,7 @@ userSchema.set("toObject", {
   virtuals: true,
 });
 
-const User = mongoose.model<IUser, UserModel>("User", userSchema);
+const User = mongoose.model<IUser, UserModel, IUserMethods>("User", userSchema);
 
 export default User;
+export { User };

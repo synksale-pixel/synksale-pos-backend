@@ -40,19 +40,21 @@ const devFormat = winston.format.combine(
   winston.format.colorize({ all: true }),
   winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
   winston.format.errors({ stack: true }), // Automatically extracts stack trace from Error objects
-  winston.format.printf(({ timestamp, level, message, stack, requestId, ...metadata }) => {
-    let logMessage = `[${timestamp}] [${level}]`;
-    if (requestId) {
-      logMessage += ` [req-id: ${requestId}]`;
+  winston.format.printf(
+    ({ timestamp, level, message, stack, requestId, ...metadata }) => {
+      let logMessage = `[${timestamp}] [${level}]`;
+      if (requestId) {
+        logMessage += ` [req-id: ${requestId}]`;
+      }
+      logMessage += `: ${message}`;
+      if (stack) {
+        logMessage += `\nStack Trace:\n${stack}`;
+      } else if (Object.keys(metadata).length > 0) {
+        logMessage += ` | Metadata: ${JSON.stringify(metadata)}`;
+      }
+      return logMessage;
     }
-    logMessage += `: ${message}`;
-    if (stack) {
-      logMessage += `\nStack Trace:\n${stack}`;
-    } else if (Object.keys(metadata).length > 0) {
-      logMessage += ` | Metadata: ${JSON.stringify(metadata)}`;
-    }
-    return logMessage;
-  })
+  )
 );
 
 /**
