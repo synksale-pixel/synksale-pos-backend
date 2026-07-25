@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "lint": "eslint src/**/*.ts",
     "format": "prettier --write \"src/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\""
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "seed:super-admin": "tsx scripts/seedSuperAdmin.ts"
   },
   "repository": {
     "type": "git",
