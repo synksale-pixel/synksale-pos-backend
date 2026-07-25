@@ -193,3 +193,91 @@ sequenceDiagram
 ```
 
 ---
+
+### 4. Linting and Type Safety Adjustments
+We eliminated the use of the `any` keyword in the implementation by:
+1. **Namespace Merging (`types/express.d.ts`):** Extended the Express Request interface to merge type-safe `user?: UserDocument` and context keys.
+2. **Error Narrowing:** Refactored catches to type-check `error instanceof Error` before accessing properties.
+3. **Mongoose Populated Casts:** Handled populated schema fields using safe narrowing checks (e.g., `'scope' in orgRole` property guard) instead of casting as `any`.
+
+---
+
+## 👑 Platform-Level Super Admin Authentication System
+
+We implemented a secure, end-to-end Super Admin Authentication System designed to manage platform-level administrators separately from tenant-level users (like managers, cashiers, and org admins). This guarantees platform operators can manage the system globally without contaminating multi-tenant data boundaries.
+
+### 1. Database Schema & Data Layer Security (`src/models/user.model.ts`)
+We established strict boundary layers directly in the database:
+- **Conditional Organization Scoping:** Super Admins span all organizations. We updated the `IUser` interface to support a `null` `organizationId` and configured a conditional validation function in Mongoose:
+  ```typescript
+  organizationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Organization",
+    required: function (this: any) {
+      return !this.isSuperAdmin; // Only required for tenant accounts
+    }
+  }
+  ```
+- **Tenant Exclusivity Hook (Defense-in-Depth):** Added a schema-level `pre("validate")` hook that rejects saving user documents if both `isSuperAdmin: true` and `organizationId` are present. This prevents tenant-to-platform privilege escalation.
+- **Partial Compound Indexing Strategy:**
+  - MongoDB's default compound unique index on `{ organizationId: 1, email: 1 }` fails when multiple users have a `null` organizationId (since only one document can have a null value).
+  - Reconfigured this to a partial index: `{ organizationId: 1, email: 1 }` filtered to `{ organizationId: { $gt: null } }`. This ignores platform accounts.
+  - Added a second partial index: `{ email: 1 }` filtered to `{ isSuperAdmin: true }` to ensure all Super Admin email addresses are globally unique across the platform.
+
+---
+
+### 2. Strong Cryptographic Boundaries (JWT & Secrets)
+To prevent cross-tenant key-compromise attacks (where a compromised tenant key might be used to sign a platform token), configurations are strictly isolated in `src/config/env.config.ts`:
+- **Isolate JWT Platform Secret:** Signs and verifies Super Admin tokens exclusively using `JWT_PLATFORM_SECRET`. We added strict refinements checking that this platform secret does not match the tenant access or refresh secrets.
+- **Tighter Expiry Configurations:** Platform tokens carry higher privilege, requiring shorter lifetimes:
+  - Access Token expiry: `10m` (vs tenant `15m`).
+  - Refresh Token expiry: `3d` (vs tenant `7d`).
+- **Audience Claim Guard:** Super Admin access tokens are signed with the audience claim `{ aud: 'platform' }`. The platform verifier strictly asserts `aud === 'platform'`, ensuring tenant JWTs are rejected on platform routes.
+
+---
+
+### 3. Factorization of Shared Cryptography (`src/utils/token.util.ts`)
+To keep our code DRY (Don't Repeat Yourself), we extracted cryptographic and helper logic from the existing tenant service into a unified utility file:
+- `generateOpaqueToken()`: Generates a 40-byte hex-random plaintext token and returns both the plain string (for the client) and its SHA-256 hashed representation (for database storage).
+- `hashToken()`: Reusable helper for SHA-256 token hashing.
+- `getExpiryDate()`: Parses human-friendly time periods (e.g. `3d`, `10m`) into native JavaScript Date objects.
+- Refactored the original `auth.service.ts` to consume these shared utilities, ensuring clean and reusable patterns.
+
+---
+
+### 4. Platform Authentication Middleware (`src/middleware/platformAuth.middleware.ts`)
+Created a dedicated middleware for Super Admin authentication that operates in complete isolation from the tenant RBAC:
+- Extracts and verifies bearer tokens using the platform secret (`JWT_PLATFORM_SECRET`).
+- Re-validates the database state (`isSuperAdmin === true` and `isActive === true`) to catch real-time account deactivations.
+- Binds user details to the request (`req.user`) and registers `userId` in the thread-safe `AsyncLocalStorage` Request Context.
+
+---
+
+### 5. Platform Controller, Validation & Routes
+Built the controller layer (`src/controllers/platformAuth.controller.ts`) to manage authentication endpoints:
+- **Anti-User Enumeration Login:** If a login fails, the controller catches the failure, logs the detailed breakdown internally via Winston, and returns a generic `401 Invalid credentials` to the client. This prevents attackers from finding valid admin emails by analyzing response differences.
+- **Refresh Token Rotation (RTR):** Enforces single-use refresh tokens. When a session is refreshed, the old refresh token is revoked and a new pair is issued. Contains code documentation detailing how to handle token reuse attacks (terminating all active sessions if a previously-used token is presented again).
+- **Logout Mechanics:** Supports logging out of a single device (by matching and removing the hashed token) or purging the entire `refreshTokens` subdocument array to log out of all devices.
+- **Namespaced API:** Mounted the routes under `/api/v1/platform/auth/...` so it is isolated and clearly identifiable in routing trees.
+
+---
+
+### 6. CLI-Only Seeding Pathway (`src/scripts/seedSuperAdmin.ts`)
+To enforce that Super Admin accounts are never created via public HTTP endpoints, we built a secure database initialization CLI script:
+- Invoked via `npm run seed:super-admin`.
+- Parses arguments (`--email`, `--password`), checks environment variables as a fallback, and uses interactive terminal prompting if variables are missing.
+- Runs input checks against Zod schemas and saves the new administrator document directly to the database.
+
+---
+
+### 7. End-to-End Verification
+- **Compilation & Formatting Check:** Ensured strict type compliance and verified linting rules.
+- **Integration Test Suite (`testSuperAdminAuth.ts`):** Built a self-contained integration test environment starting a mock server on port `3999`. Runs 7 test cases covering:
+  1. Successful Super Admin Login
+  2. Input Validation Failure (Invalid email)
+  3. Incorrect Password Attempt
+  4. Access Token verification (Audience guard validation)
+  5. Session Refresh rotation and RTR
+  6. Logout (Session invalidation)
+  7. Tenant Token rejection on Platform route
+  All tests pass successfully.

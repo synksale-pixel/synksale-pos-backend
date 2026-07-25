@@ -33,8 +33,7 @@ export async function getEffectivePermissions(
   // 2. Fetch Organization-level permissions (if orgRoleId is assigned)
   if (user.orgRoleId) {
     const orgRole = (await Role.findById(user.orgRoleId).lean().exec()) as
-      | (IRole & { isActive?: boolean })
-      | null;
+      (IRole & { isActive?: boolean }) | null;
     if (orgRole && orgRole.isActive !== false) {
       orgRole.permissions.forEach((perm) => permissionsSet.add(perm));
     }
@@ -47,9 +46,9 @@ export async function getEffectivePermissions(
     );
 
     if (matchingAccess) {
-      const storeRole = (await Role.findById(matchingAccess.roleId).lean().exec()) as
-        | (IRole & { isActive?: boolean })
-        | null;
+      const storeRole = (await Role.findById(matchingAccess.roleId)
+        .lean()
+        .exec()) as (IRole & { isActive?: boolean }) | null;
       if (storeRole && storeRole.isActive !== false) {
         storeRole.permissions.forEach((perm) => permissionsSet.add(perm));
       }

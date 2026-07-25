@@ -22,7 +22,7 @@ export interface IStoreAccess {
 }
 
 export interface IUser {
-  organizationId: mongoose.Types.ObjectId;
+  organizationId: mongoose.Types.ObjectId | null;
   email: string;
   passwordHash: string;
   firstName: string;
@@ -96,7 +96,10 @@ const userSchema = new Schema<
     organizationId: {
       type: Schema.Types.ObjectId,
       ref: "Organization",
-      required: [true, "Organization reference is required"],
+      required: function (this: any) {
+        // Required only for tenant users (i.e. isSuperAdmin is false or undefined)
+        return !this.isSuperAdmin;
+      },
       index: true, // Speeds up scoping users by organization
     },
     email: {
@@ -104,7 +107,7 @@ const userSchema = new Schema<
       required: [true, "Email is required"],
       lowercase: true,
       trim: true,
-      index: true,
+      // index: true,
     },
     passwordHash: {
       type: String,
@@ -154,11 +157,48 @@ const userSchema = new Schema<
 
 /**
  * Compound Unique Index: { organizationId: 1, email: 1 }
- * Why: Allows the same email address to hold separate accounts across different organizations
- * (a judgment call to support multi-tenant structure). If global uniqueness is required instead,
- * this would be a global index. Within a single organization, email addresses must be unique.
+ * Why: Allows the same email address to hold separate accounts across different organizations.
+ * Changed to a partial index that only applies when organizationId is not null.
+ * This ensures MongoDB does not block multiple super admins (who have organizationId: null).
+ * MongoDB BSON type comparison places ObjectIds above null, so $gt: null matches any valid ObjectId.
+ * This keeps the platform/tenant boundary unambiguous at the data layer, not just the application layer.
  */
-userSchema.index({ organizationId: 1, email: 1 }, { unique: true });
+userSchema.index(
+  { organizationId: 1, email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { organizationId: { $gt: null } },
+  }
+);
+
+/**
+ * Partial Unique Index: { email: 1 } for Super Admins
+ * Why: Ensures email uniqueness globally among platform-level super admin accounts.
+ * Points to the super admin auth task/PR context.
+ */
+userSchema.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isSuperAdmin: true },
+  }
+);
+
+// ==========================================
+// Pre-validate Hooks
+// ==========================================
+
+// Ensure exclusivity: super admin must never simultaneously belong to a tenant organization
+userSchema.pre("validate", function (next) {
+  if (this.isSuperAdmin && this.organizationId) {
+    return next(
+      new Error(
+        "Exclusivity Constraint Violation: A Super Admin cannot simultaneously be assigned to a tenant organization."
+      )
+    );
+  }
+  next();
+});
 
 // ==========================================
 // Pre-save Hooks

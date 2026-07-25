@@ -5,19 +5,17 @@
  */
 
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import { env } from "../config/env.config";
 import { ApiError } from "../utils/ApiError";
+import {
+  generateOpaqueToken,
+  GeneratedRefreshToken,
+} from "../utils/token.util";
 
 export interface AccessTokenPayload {
   userId: string;
   organizationId: string;
   isSuperAdmin: boolean;
-}
-
-export interface GeneratedRefreshToken {
-  token: string; // Plaintext token to return to the client
-  hashedToken: string; // Hashed version to store in the database
 }
 
 /**
@@ -46,16 +44,7 @@ export function generateAccessToken(payload: AccessTokenPayload): string {
  * hijacked tokens to spawn new sessions.
  */
 export function generateRefreshToken(): GeneratedRefreshToken {
-  const plaintext = crypto.randomBytes(40).toString("hex");
-  const hashedToken = crypto
-    .createHash("sha256")
-    .update(plaintext)
-    .digest("hex");
-
-  return {
-    token: plaintext,
-    hashedToken,
-  };
+  return generateOpaqueToken();
 }
 
 /**

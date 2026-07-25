@@ -59,7 +59,9 @@ export const authenticate = asyncHandler(
     const context = getRequestContext();
     if (context) {
       context.userId = user._id.toString();
-      context.organizationId = user.organizationId.toString();
+      if (user.organizationId) {
+        context.organizationId = user.organizationId.toString();
+      }
     }
 
     next();

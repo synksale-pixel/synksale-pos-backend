@@ -5,6 +5,7 @@
 
 import { Router, Request, Response } from "express";
 import { ApiResponse } from "../../utils/ApiResponse";
+import platformAuthRouter from "./platformAuth.routes";
 
 const v1Router = Router();
 
@@ -23,7 +24,6 @@ v1Router.get("/health", (_req: Request, res: Response) => {
 });
 
 // Feature routers will be mounted here as they're built, e.g.:
-// v1Router.use('/auth', authRouter);
-// v1Router.use('/products', productRouter);
+v1Router.use("/platform/auth", platformAuthRouter);
 
 export default v1Router;

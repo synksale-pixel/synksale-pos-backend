@@ -60,6 +60,21 @@ const envSchema = z
     }),
     JWT_REFRESH_EXPIRY: z.string().default("7d"),
 
+    // ===== JWT Platform Config (Super Admin) =====
+    // JWT_PLATFORM_SECRET must be at least 32 characters long.
+    JWT_PLATFORM_SECRET: z.string().min(32, {
+      message: "JWT_PLATFORM_SECRET must be at least 32 characters long.",
+    }),
+    // Platform-level access tokens should have a tighter expiry given the blast radius of compromise.
+    JWT_PLATFORM_ACCESS_EXPIRY: z.string().default("10m"),
+    // Shorter refresh expiry than tenant tokens for same reason.
+    JWT_PLATFORM_REFRESH_EXPIRY: z.string().default("3d"),
+
+    // ===== CLI Seed Config =====
+    // These are optional. Only for local bootstrap convenience, never relied on in production.
+    SUPER_ADMIN_SEED_EMAIL: z.string().email().optional(),
+    SUPER_ADMIN_SEED_PASSWORD: z.string().min(8).optional(),
+
     // ===== API Config =====
     API_VERSION: z.string().default("v1"),
 
@@ -94,6 +109,14 @@ const envSchema = z
   .refine((data) => data.JWT_ACCESS_SECRET !== data.JWT_REFRESH_SECRET, {
     message: "JWT_REFRESH_SECRET must be different from JWT_ACCESS_SECRET.",
     path: ["JWT_REFRESH_SECRET"],
+  })
+  .refine((data) => data.JWT_PLATFORM_SECRET !== data.JWT_ACCESS_SECRET, {
+    message: "JWT_PLATFORM_SECRET must be different from JWT_ACCESS_SECRET.",
+    path: ["JWT_PLATFORM_SECRET"],
+  })
+  .refine((data) => data.JWT_PLATFORM_SECRET !== data.JWT_REFRESH_SECRET, {
+    message: "JWT_PLATFORM_SECRET must be different from JWT_REFRESH_SECRET.",
+    path: ["JWT_PLATFORM_SECRET"],
   });
 
 // Perform validation against the global process.env object
