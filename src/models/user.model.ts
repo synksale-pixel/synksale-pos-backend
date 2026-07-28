@@ -24,7 +24,7 @@ export interface IStoreAccess {
 export interface IUser {
   organizationId: mongoose.Types.ObjectId | null;
   email: string;
-  passwordHash: string;
+  passwordHash?: string;
   firstName: string;
   lastName: string;
   isSuperAdmin: boolean;
@@ -34,6 +34,9 @@ export interface IUser {
   isActive: boolean;
   isDelete: boolean;
   lastLoginAt: Date | null;
+  inviteToken?: string;
+  inviteTokenExpiresAt?: Date;
+  inviteStatus?: "pending" | "accepted";
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -111,7 +114,10 @@ const userSchema = new Schema<
     },
     passwordHash: {
       type: String,
-      required: [true, "Password hash is required"],
+      required: function (this: any) {
+        // Required unless the user has a pending invitation
+        return this.inviteStatus !== "pending";
+      },
       select: false, // Ensures password hash is never leaked by default in queries
     },
     firstName: {
@@ -148,6 +154,19 @@ const userSchema = new Schema<
     lastLoginAt: {
       type: Date,
       default: null,
+    },
+    inviteToken: {
+      type: String,
+      select: false,
+      index: true,
+    },
+    inviteTokenExpiresAt: {
+      type: Date,
+    },
+    inviteStatus: {
+      type: String,
+      enum: ["pending", "accepted"],
+      default: "accepted", // Default to accepted for normal users (e.g., org admins on signup)
     },
   },
   {
@@ -206,7 +225,7 @@ userSchema.pre("validate", function (next) {
 
 // Hash passwordHash before saving if it has been modified
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("passwordHash")) {
+  if (!this.passwordHash || !this.isModified("passwordHash")) {
     return next();
   }
   try {
@@ -240,10 +259,13 @@ userSchema.pre(/^find|countDocuments/, function (this: any, next) {
 userSchema.methods.comparePassword = async function (
   candidatePassword: string
 ): Promise<boolean> {
-  if (!this.passwordHash) {
+  if (!this.isSelected("passwordHash")) {
     throw new Error(
       "Password hash not loaded. Please select passwordHash in your query explicitly."
     );
+  }
+  if (!this.passwordHash) {
+    return false;
   }
   return bcrypt.compare(candidatePassword, this.passwordHash);
 };
@@ -254,6 +276,8 @@ userSchema.methods.comparePassword = async function (
 const cleanTransform = (_doc: any, ret: any) => {
   delete ret.passwordHash;
   delete ret.refreshTokens;
+  delete ret.inviteToken;
+  delete ret.inviteTokenExpiresAt;
   delete ret.__v;
   return ret;
 };

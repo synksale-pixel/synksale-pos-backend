@@ -281,3 +281,84 @@ To enforce that Super Admin accounts are never created via public HTTP endpoints
   6. Logout (Session invalidation)
   7. Tenant Token rejection on Platform route
   All tests pass successfully.
+
+---
+
+## 🏢 Tenant Onboarding, User Invitations & Transactional Signup
+
+We implemented a robust and secure **Multi-Tenant Onboarding System** featuring atomic organization signups, invite-based user registration with strict privilege escalations control, and safe transactional database operations.
+
+### 1. Database Schema & Model Enhancements (`src/models/user.model.ts`)
+To accommodate an invitation flow without violating schema constraints (since invited users do not have a password or active status at the time of creation), we updated the User schema:
+- **Invitation Tracking Fields:**
+  - `inviteToken`: Hashed (SHA-256) opaque token, marked `select: false` to prevent accidental database leakage.
+  - `inviteTokenExpiresAt`: Timestamp representing invite validity.
+  - `inviteStatus`: Enum with values `'pending'` | `'accepted'`, defaulting to `'accepted'` (since self-registering organization admins are immediately active and accepted).
+- **Conditional Password Requirement:** Modified the `passwordHash` field to be required only when the invitation is accepted:
+  ```typescript
+  passwordHash: {
+    type: String,
+    required: function (this: any) {
+      return this.inviteStatus !== "pending";
+    },
+    select: false,
+  }
+  ```
+- **Safe Password Comparison:** Refactored the `comparePassword()` instance method to return `false` gracefully if the user has no password set (e.g. pending invited users) rather than raising internal server exceptions:
+  ```typescript
+  userSchema.methods.comparePassword = async function (candidatePassword: string): Promise<boolean> {
+    if (!this.isSelected("passwordHash")) {
+      throw new Error("Password hash not loaded. Please select passwordHash...");
+    }
+    if (!this.passwordHash) {
+      return false; // Safely return false if user has no password set (e.g., pending invitee)
+    }
+    return bcrypt.compare(candidatePassword, this.passwordHash);
+  };
+  ```
+
+---
+
+### 2. Transactional Tenant Onboarding (`src/services/organizationSignup.service.ts`)
+Signing up a new tenant involves modifying multiple Mongoose collections (`organizations`, `roles`, and `users`). To prevent orphaned records in case of partial failures, we implemented these steps inside a **Mongoose session transaction**:
+- **Slugification & Collision Handler:** Automatically generates a clean, lowercase URL slug from the organization name. If a collision is detected in the database, a fallback loop appends a 4-character random alphanumeric suffix and retries up to 10 times.
+- **Transactional Role Seeding:** Integrated `seedDefaultRolesForOrganization` inside the session context, ensuring the default tenant roles (such as `org_admin`, `store_manager`, `cashier`) are provisioned within the transactional boundary.
+- **Immediate Admin Bindings:** Binds the initial tenant user to the newly seeded `org_admin` role.
+- **Atomic Operations:** If any database write fails during role seeding, user creation, or organization creation, the transaction rolls back, keeping the database in a clean state. On success, the transaction commits, and active access + refresh tokens are immediately generated.
+
+---
+
+### 3. Invite-based User Onboarding (`src/services/userInvite.service.ts`)
+Manages the lifecycle of user invitations and prevents privilege escalations:
+- **Enforcing the Privilege Ceiling:** Before creating an invite, the system verifies that the inviter's scope rank and permission keys are superior to or equal to the target role. A user with `store_manager` privileges cannot invite an `org_admin`, nor can any user assign a role that possesses permissions they do not have themselves.
+- **Hashed Opaque Invitations:** Reuses the opaque token design. A cryptographically secure 40-byte plaintext hex token is generated for the email URL, while the SHA-256 hash is stored in the database.
+- **Scope Scoping Assignment:**
+  - For `'organization'` scoped roles, the role ID is assigned directly to `orgRoleId`.
+  - For `'store'` scoped roles, the configuration pushes a binding into the `storeAccess` array (validating that `storeId` is provided).
+- **Auto-Login on Accept:** When accepting an invitation, the token is verified, the user sets their password (triggering Mongoose's pre-save hashing hook), the account status turns active, and the invite status becomes `'accepted'`. The system immediately returns the access and refresh tokens.
+
+---
+
+### 4. Controller & Route Configurations
+- **Anti-Enumeration Login:** Refactored tenant auth login endpoints. If the slug, email, or password comparison fails, the system responds with a generic `401 Invalid credentials` to block brute-force scanners from mapping active accounts. Status checks (e.g. `isActive`) are executed only after password validation.
+- **Dynamic Permission Resolution (`/me`):** Built the `/me` routing endpoint. It resolves the user's active permissions context. If a `storeId` query parameter is passed, the service aggregates the user's store-specific permissions (e.g., cashier operations) alongside their organization-wide permissions.
+
+---
+
+### 5. Strict TypeScript & ESLint Compliance
+Refactored operations to ensure clean compilations without bypassing type checks:
+- **Eliminated Explicit Any:** Cleaned up type assertions, typing request payloads with strict interfaces.
+- **ES6 Object Destructuring over Delete Operands:** The JavaScript `delete` operator is unsafe and discouraged in strict TypeScript setups. Instead, we sanitize database documents using object destructuring:
+  ```typescript
+  const { passwordHash: _passwordHash, refreshTokens: _refreshTokens, ...userResponse } = user.toObject();
+  ```
+  Unused outputs are prefixed with an underscore (`_`), complying with the ESLint rules for unused variables.
+
+---
+
+### 6. Programmatic Verification (`src/scripts/verifyTenantFlow.ts`)
+We created a verification script in the development environment to prove the integrity of the onboarding systems:
+- Verifies that organization signups are fully atomic and yield valid auth tokens.
+- Asserts that invitations register users with `isActive: false` and no passwords.
+- Validates that accepting the invite activates the account, registers the password hash, and logs the user in.
+- Asserts that a `store_manager` trying to invite an `org_admin` is intercepted and throws a `403 Access Denied` error.V

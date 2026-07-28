@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     /* Base Options */
-    "ignoreDeprecations": "6.0" /* Silence deprecation warnings for TypeScript 6.0 */,
+    "ignoreDeprecations": "6.0" /* Silence deprecation warnings */,
     "target": "ES2022" /* Specify ECMAScript target version */,
     "module": "CommonJS" /* Specify module code generation */,
     "moduleResolution": "node" /* Resolve modules using Node.js style */,

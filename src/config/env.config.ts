@@ -94,6 +94,10 @@ const envSchema = z
       }, z.boolean())
       .default(false),
 
+    // ===== User Invite Config =====
+    INVITE_TOKEN_EXPIRY: z.string().default("3d"),
+    FRONTEND_URL: z.string().url({ message: "FRONTEND_URL must be a valid URL." }),
+
     // ===== Logging Configuration =====
     LOG_LEVEL: z
       .enum(["error", "warn", "info", "http", "debug"])

@@ -78,7 +78,8 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
  * @returns Array of created or existing Role documents.
  */
 export async function seedDefaultRolesForOrganization(
-  organizationId: mongoose.Types.ObjectId | string
+  organizationId: mongoose.Types.ObjectId | string,
+  options?: { session?: mongoose.ClientSession }
 ): Promise<IRole[]> {
   const orgId =
     typeof organizationId === "string"
@@ -92,17 +93,23 @@ export async function seedDefaultRolesForOrganization(
     let role = await Role.findOne({
       organizationId: orgId,
       slug: template.slug,
-    });
+    }).session(options?.session || null);
 
     if (!role) {
-      role = await Role.create({
-        organizationId: orgId,
-        scope: template.scope,
-        name: template.name,
-        slug: template.slug,
-        isSystemRole: true, // Prevents deletion
-        permissions: template.permissions,
-      });
+      const [newRole] = await Role.create(
+        [
+          {
+            organizationId: orgId,
+            scope: template.scope,
+            name: template.name,
+            slug: template.slug,
+            isSystemRole: true, // Prevents deletion
+            permissions: template.permissions,
+          },
+        ],
+        options
+      );
+      role = newRole;
     }
 
     roles.push(role);
