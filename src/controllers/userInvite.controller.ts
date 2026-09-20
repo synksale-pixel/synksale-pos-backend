@@ -27,8 +27,14 @@ export const invite = asyncHandler(async (req: Request, res: Response) => {
 
   const { email, firstName, lastName, roleId, storeId } = req.body;
 
+  // organizationId is populated (a full Organization document) by the `authenticate`
+  // middleware, not a bare ObjectId — resolve its `_id` explicitly rather than calling
+  // .toString() on the document itself.
+  const orgRef = invitingUser.organizationId as unknown as { _id: { toString(): string } };
+  const organizationId = orgRef._id.toString();
+
   const result = await inviteUser({
-    organizationId: invitingUser.organizationId.toString(),
+    organizationId,
     storeId,
     email,
     firstName,

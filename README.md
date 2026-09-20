@@ -163,6 +163,19 @@ Once the application starts, you can check its status using the following endpoi
 
 ---
 
+## 📖 API Documentation (Swagger / OpenAPI)
+
+The OpenAPI spec is generated from the Zod validators in `src/validators/` (field metadata via `.openapi()`), response schemas in `src/validators/responses/`, and route registrations in `src/docs/*.openapi.ts`.
+
+- Interactive UI: `http://localhost:<PORT>/api-docs`
+- Raw JSON spec (import into Postman/Insomnia/codegen): `http://localhost:<PORT>/api-docs.json`
+- Mounted only when `NODE_ENV !== production`.
+- The spec is built at server start; `npm run dev` restarts automatically on changes, otherwise restart the server.
+
+**Documenting a new route:** add `.openapi({ description, example })` metadata to its Zod validator (validator files must begin with `import "../config/openapi.registry";`), add response schemas in `src/validators/responses/`, register the route with `registry.registerPath(...)` in `src/docs/<domain>.openapi.ts`, and import that file in `src/docs/index.ts`. Tenant routes use the `tenantBearerAuth` scheme and platform routes use `platformBearerAuth` (the tokens are not interchangeable).
+
+---
+
 ## 📦 Pushing to GitHub
 
 Follow these steps to push your local changes to the GitHub repository:

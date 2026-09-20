@@ -9,6 +9,7 @@
 
 import { connectDB, disconnectDB } from "../src/config/db.config";
 import { signupOrganization } from "../src/services/organizationSignup.service";
+import { approveOrganization } from "../src/services/platformOrganization.service";
 import { inviteUser, acceptInvite } from "../src/services/userInvite.service";
 import { Organization } from "../src/models/organization.model";
 import { User } from "../src/models/user.model";
@@ -36,6 +37,7 @@ async function runVerification() {
     const signupInput = {
       organizationName: "Test Verification Org",
       contactEmail: "admin@verif.com",
+      contactPhone: "+919876543210",
       adminFirstName: "John",
       adminLastName: "Doe",
       adminEmail: "admin@verif.com",
@@ -45,16 +47,21 @@ async function runVerification() {
     };
 
     const signupResult = await signupOrganization(signupInput);
-    console.log("✅ Signup successful!");
+    console.log("✅ Signup (application submission) successful!");
     console.log("Generated Slug:", signupResult.organization.slug);
     console.log("Admin User ID:", signupResult.user.id);
-    console.log("Access Token length:", signupResult.accessToken.length);
-    console.log("Refresh Token (plaintext):", signupResult.refreshToken);
+    console.log("Approval status:", signupResult.organization.approvalStatus);
+    if (signupResult.organization.approvalStatus !== "pending") {
+      throw new Error("FAIL: New organization should default to 'pending' approval status!");
+    }
+    if ("accessToken" in signupResult || "refreshToken" in signupResult) {
+      throw new Error("FAIL: Signup should no longer issue tokens under the gated onboarding model!");
+    }
 
     // Verify DB entries
     const dbOrg = await Organization.findById(signupResult.organization._id);
     if (!dbOrg) throw new Error("DB Organization not found!");
-    console.log("Verified Organization in DB. Active status:", dbOrg.isActive);
+    console.log("Verified Organization in DB. Active status:", dbOrg.isActive, "| Approval status:", dbOrg.approvalStatus);
 
     const dbUser = await User.findById(signupResult.user.id).select("+passwordHash");
     if (!dbUser) throw new Error("DB Admin User not found!");
@@ -63,6 +70,17 @@ async function runVerification() {
     // Verify seed roles exist
     const seededRoles = await Role.find({ organizationId: dbOrg._id });
     console.log(`Verified default roles seeded in DB: ${seededRoles.map(r => r.slug).join(", ")}`);
+
+    // ----------------------------------------------------
+    // TEST 1b: Super Admin Approval (Sales-Assisted Gate)
+    // ----------------------------------------------------
+    console.log("\n--- [Test 1b] Super Admin Organization Approval ---");
+    // Using dbUser's own id as a stand-in "approver" id since this script has no live super admin session.
+    const approvedOrg = await approveOrganization(dbOrg._id.toString(), dbUser._id.toString());
+    if (approvedOrg.approvalStatus !== "approved") {
+      throw new Error("FAIL: Organization approval did not persist!");
+    }
+    console.log("✅ Organization approved. Status:", approvedOrg.approvalStatus);
 
     // ----------------------------------------------------
     // TEST 2: Create a dummy Store for scoping tests

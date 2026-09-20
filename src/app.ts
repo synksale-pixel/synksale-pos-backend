@@ -5,6 +5,8 @@ import { env } from "./config/env.config";
 import requestIdMiddleware from "./middleware/requestId.middleware";
 import requestLogger from "./middleware/requestLogger.middleware";
 import v1Router from "./routes/v1";
+import swaggerUi from "swagger-ui-express";
+import { generateOpenApiDocument } from "./config/openapi.config";
 import {
   notFoundHandler,
   globalErrorHandler,
@@ -56,6 +58,19 @@ app.get("/health", (_req: Request, res: Response) => {
 // Versioned API routes
 // The API_VERSION environment variable allows v2 to be mounted alongside v1 in the future without breaking existing clients.
 app.use(`/api/${env.API_VERSION}`, v1Router);
+
+// ===== API Documentation (Swagger UI) =====
+// Mounted ONLY outside production by default (docs are not exposed publicly in prod
+// unless explicitly decided otherwise). The spec is generated from the Zod validators/registry.
+if (env.NODE_ENV !== "production") {
+  const openApiDocument = generateOpenApiDocument();
+  // Raw spec: import into Postman/Insomnia/codegen tools
+  app.get("/api-docs.json", (_req: Request, res: Response) => {
+    res.status(200).json(openApiDocument);
+  });
+  // Interactive UI
+  app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openApiDocument));
+}
 
 // ===== Error Handling (must be last) =====
 

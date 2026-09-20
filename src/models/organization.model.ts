@@ -11,8 +11,16 @@ export interface IOrganization {
   name: string;
   slug: string;
   contactEmail: string;
+  contactPhone: string;
+  applicantEmail?: string;
   isActive: boolean;
   isDelete: boolean;
+  approvalStatus: "pending" | "approved" | "rejected";
+  approvedBy: mongoose.Types.ObjectId | null;
+  approvedAt: Date | null;
+  rejectedBy: mongoose.Types.ObjectId | null;
+  rejectedAt: Date | null;
+  rejectionReason: string | null;
   settings: {
     currency: string;
     timezone: string;
@@ -54,6 +62,18 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
       trim: true,
       lowercase: true,
     },
+    contactPhone: {
+      type: String,
+      required: [true, "Contact phone is required"],
+      trim: true,
+    },
+    // Admin email used to apply; denormalized so the DB can enforce one pending
+    // application per applicant (see partial unique index below).
+    applicantEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -63,6 +83,37 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
       type: Boolean,
       default: false,
       index: true, // Supports soft delete
+    },
+    // ===== Sales-Assisted Onboarding Gate =====
+    // Orthogonal to `isActive`: approvalStatus gates whether the tenant is allowed to
+    // authenticate at all; isActive continues to represent post-approval suspension.
+    approvalStatus: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+      index: true,
+    },
+    approvedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    approvedAt: {
+      type: Date,
+      default: null,
+    },
+    rejectedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    rejectedAt: {
+      type: Date,
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      default: null,
     },
     settings: {
       currency: {
@@ -77,6 +128,24 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
   },
   {
     timestamps: true, // Automatically manages createdAt and updatedAt fields
+  }
+);
+
+// Serves the signup duplicate check, which must also match approved orgs (the partial
+// unique index below covers pending only).
+organizationSchema.index({ applicantEmail: 1, approvalStatus: 1 });
+
+// One pending application per applicant email, enforced by MongoDB so concurrent
+// signups cannot both slip past the read-then-write check in the signup service.
+// The $type clause keeps legacy docs without applicantEmail out of the index.
+organizationSchema.index(
+  { applicantEmail: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      approvalStatus: "pending",
+      applicantEmail: { $type: "string" },
+    },
   }
 );
 

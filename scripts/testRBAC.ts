@@ -42,6 +42,7 @@ async function runTests() {
       name: "Test Org Entity",
       slug: TEST_SLUG,
       contactEmail: "test@example.com",
+      contactPhone: "+919876543210",
       settings: {
         currency: "INR",
         timezone: "Asia/Kolkata",
