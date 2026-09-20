@@ -324,7 +324,7 @@ Signing up a new tenant involves modifying multiple Mongoose collections (`organ
 - **Slugification & Collision Handler:** Automatically generates a clean, lowercase URL slug from the organization name. If a collision is detected in the database, a fallback loop appends a 4-character random alphanumeric suffix and retries up to 10 times.
 - **Transactional Role Seeding:** Integrated `seedDefaultRolesForOrganization` inside the session context, ensuring the default tenant roles (such as `org_admin`, `store_manager`, `cashier`) are provisioned within the transactional boundary.
 - **Immediate Admin Bindings:** Binds the initial tenant user to the newly seeded `org_admin` role.
-- **Atomic Operations:** If any database write fails during role seeding, user creation, or organization creation, the transaction rolls back, keeping the database in a clean state. On success, the transaction commits, and active access + refresh tokens are immediately generated.
+- **Atomic Operations:** If any database write fails during role seeding, user creation, or organization creation, the transaction rolls back, keeping the database in a clean state. On success, the transaction commits. *(Superseded: signup no longer issues tokens. The organization is created as `pending` and must be approved by a Super Admin; see "Gated Organization Onboarding" below.)*
 
 ---
 
@@ -361,4 +361,60 @@ We created a verification script in the development environment to prove the int
 - Verifies that organization signups are fully atomic and yield valid auth tokens.
 - Asserts that invitations register users with `isActive: false` and no passwords.
 - Validates that accepting the invite activates the account, registers the password hash, and logs the user in.
-- Asserts that a `store_manager` trying to invite an `org_admin` is intercepted and throws a `403 Access Denied` error.V
+- Asserts that a `store_manager` trying to invite an `org_admin` is intercepted and throws a `403 Access Denied` error.
+
+---
+
+## 🚦 Gated Organization Onboarding (Sales-Assisted Approval)
+
+Organization signup no longer grants immediate access. New organizations are created as `pending` and can only authenticate after a Super Admin approves them.
+
+### 1. Signup Request (`POST /api/v1/auth/signup`)
+- **Body:** `organizationName`, `contactPhone` (required), `contactEmail` (optional), `adminFirstName`, `adminLastName`, `adminEmail`, `adminPassword`.
+- **`contactPhone`:** New required field on the Organization model. Accepts 7-20 characters: optional leading `+`, digits, spaces, `-` and `()`.
+- **`contactEmail`:** Optional. When omitted, it falls back to `adminEmail`.
+- **No tokens issued:** The response is `201` with `{ organization: { id, name, slug, approvalStatus } }`.
+
+### 2. Duplicate Application Protection (`organizationSignup.service.ts`)
+Duplicates are keyed on `adminEmail` (names collide between unrelated businesses):
+- **Pre-check:** Rejects with `409` if the admin email belongs to a user in an organization that is `pending` or `approved`. Rejected and soft-deleted organizations are ignored.
+- **Database-level guarantee:** `applicantEmail` (denormalized copy of the admin email) has a partial unique index limited to `approvalStatus: "pending"`, so two simultaneous signups cannot both pass the pre-check. A duplicate-key error maps to `409`.
+- **Transient conflict retry:** The public `signupOrganization` wraps the transactional `signupOrganizationOnce` and retries up to 4 times on `TransientTransactionError`.
+
+### 3. Approval State on the Organization Model
+- `approvalStatus`: `pending` (default) | `approved` | `rejected`, orthogonal to `isActive` (which still means post-approval suspension).
+- Audit fields: `approvedBy`, `approvedAt`, `rejectedBy`, `rejectedAt`, `rejectionReason`.
+- Roles are seeded at signup (not approval), so pending and rejected organizations already have their default roles.
+
+### 4. Super Admin Review API (`/api/v1/platform/organizations`, Super Admin token required)
+Files: `platformOrganization.routes.ts`, `.controller.ts`, `.service.ts`, `platformOrganization.validator.ts`.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /` | Paginated list, optional `?status=`, `page`, `limit` (max 100) |
+| `GET /:id` | Full detail of one application |
+| `POST /:id/approve` | Optional body `{ slug }` to correct the slug. `400` if already approved. `409` if the same applicant has another pending/approved organization or the slug is taken. Clears prior rejection fields. |
+| `POST /:id/reject` | Body `{ reason }` (5-500 chars). Only `pending` organizations can be rejected (atomic conditional update); otherwise `400`. Use `isActive` to suspend a live organization. |
+
+Approve and reject are logged through Winston. TODO: dedicated audit log collection and applicant email notification.
+
+### 5. Login Enforcement (`tenantAuth.controller.ts`)
+After the password is verified (to preserve anti-enumeration), login returns `403` for `pending` ("still pending review"), `rejected` ("not approved"), suspended organizations and deactivated users. Per the review notes in the reject service, `authenticate` also re-checks `approvalStatus` on each request.
+
+### 6. Flow Summary
+```
+signup -> pending --approve--> approved --(isActive=false)--> suspended
+             |
+             +--reject--> rejected --approve (re-review)--> approved
+```
+
+### 7. Known Gaps / Next Steps
+- No re-apply path for rejected organizations (the applicant can sign up again; a dedicated flow is planned).
+- No applicant notification (needs an email service), so the Super Admin must communicate the slug and decision out of band.
+- No immutable audit log collection.
+
+### 8. Token Lifetimes (for reference)
+| Token | Tenant users | Super Admin |
+|---|---|---|
+| Access | 15m (`JWT_ACCESS_EXPIRY`) | 10m (`JWT_PLATFORM_ACCESS_EXPIRY`) |
+| Refresh (rotating) | 7d (`JWT_REFRESH_EXPIRY`) | 3d (`JWT_PLATFORM_REFRESH_EXPIRY`) |
