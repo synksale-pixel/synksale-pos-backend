@@ -11,6 +11,7 @@ import { verifyAccessToken } from "../services/auth.service";
 import { getEffectivePermissions } from "../services/permission.service";
 import { User, UserDocument } from "../models/user.model";
 import { IRole } from "../models/role.model";
+import { IOrganization } from "../models/organization.model";
 import { PermissionKey } from "../config/permissions.catalog";
 
 /**
@@ -35,8 +36,13 @@ export const authenticate = asyncHandler(
     const token = authHeader.split(" ")[1];
     const decoded = verifyAccessToken(token);
 
-    // Fetch user and populate orgRoleId to check organization-wide roles immediately (efficiency design)
-    const user = await User.findById(decoded.userId).populate("orgRoleId");
+    // Fetch user and populate orgRoleId + organizationId in one round trip:
+    // orgRoleId to check organization-wide roles immediately (efficiency design),
+    // organizationId to re-validate the tenant's live approval/suspension state on every request.
+    const user = await User.findById(decoded.userId).populate([
+      "orgRoleId",
+      "organizationId",
+    ]);
 
     if (!user) {
       throw new ApiError(
@@ -52,15 +58,36 @@ export const authenticate = asyncHandler(
       );
     }
 
+    // Defense-in-depth: re-validate the tenant organization on every authenticated request,
+    // not just at login. Closes the gap where a token issued before a suspension/rejection
+    // would otherwise keep working until it naturally expires.
+    const org = user.organizationId as unknown as IOrganization | null;
+    if (org && typeof org === "object" && "approvalStatus" in org) {
+      if (org.approvalStatus !== "approved") {
+        throw new ApiError(
+          401,
+          "Authentication failed: Your organization is not approved for access."
+        );
+      }
+      if (org.isActive === false) {
+        throw new ApiError(
+          401,
+          "Authentication failed: Your organization account has been suspended."
+        );
+      }
+    }
+
     // Attach Mongoose Document to Request
     req.user = user as UserDocument;
 
     // Set variables in request context for automatic tenant scoping
+    // NOTE: organizationId is now a populated Organization document (not a bare ObjectId),
+    // so we read it from the verified token payload instead of calling .toString() on it.
     const context = getRequestContext();
     if (context) {
       context.userId = user._id.toString();
-      if (user.organizationId) {
-        context.organizationId = user.organizationId.toString();
+      if (decoded.organizationId) {
+        context.organizationId = decoded.organizationId;
       }
     }
 

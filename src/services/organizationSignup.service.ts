@@ -10,20 +10,16 @@ import { Organization } from "../models/organization.model";
 import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { seedDefaultRolesForOrganization } from "./roleSeed.service";
-import { generateAccessToken, generateRefreshToken } from "./auth.service";
-import { getExpiryDate } from "../utils/token.util";
-import { env } from "../config/env.config";
 import { ApiError } from "../utils/ApiError";
 
 export interface SignupOrganizationInput {
   organizationName: string;
-  contactEmail: string;
+  contactEmail?: string;
+  contactPhone: string;
   adminFirstName: string;
   adminLastName: string;
   adminEmail: string;
   adminPassword?: string;
-  ipAddress?: string;
-  userAgent?: string;
 }
 
 /**
@@ -44,11 +40,28 @@ function slugify(text: string): string {
  * Handles the signup flow of an organization and its admin user.
  * Runs atomically inside a transaction to prevent leaving dangling or broken organizations.
  */
-export async function signupOrganization(input: SignupOrganizationInput) {
+async function signupOrganizationOnce(input: SignupOrganizationInput) {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
+    // 0. Block duplicate applications: the admin email must not already have an
+    // organization that is pending review or approved. Rejected organizations are
+    // ignored so the applicant is not locked out (a re-apply flow will come later).
+    // The pending half is also enforced by a unique index (see organization.model.ts).
+    const adminEmail = input.adminEmail.toLowerCase().trim();
+    const activeApplication = await Organization.exists({
+      applicantEmail: adminEmail,
+      approvalStatus: { $in: ["pending", "approved"] },
+    }).session(session);
+
+    if (activeApplication) {
+      throw new ApiError(
+        409,
+        "An organization application with this admin email already exists."
+      );
+    }
+
     // 1. Generate a unique slug for the organization
     let slug = slugify(input.organizationName);
     let isUnique = false;
@@ -80,7 +93,10 @@ export async function signupOrganization(input: SignupOrganizationInput) {
         {
           name: input.organizationName.trim(),
           slug,
-          contactEmail: input.contactEmail.toLowerCase().trim(),
+          applicantEmail: adminEmail,
+          // Falls back to the admin email when no contact email is provided
+          contactEmail: (input.contactEmail || input.adminEmail).toLowerCase().trim(),
+          contactPhone: input.contactPhone.trim(),
           settings: {
             currency: "INR",
             timezone: "UTC",
@@ -112,7 +128,7 @@ export async function signupOrganization(input: SignupOrganizationInput) {
       [
         {
           organizationId: organization._id,
-          email: input.adminEmail.toLowerCase().trim(),
+          email: adminEmail,
           passwordHash: input.adminPassword,
           firstName: input.adminFirstName.trim(),
           lastName: input.adminLastName.trim(),
@@ -129,45 +145,44 @@ export async function signupOrganization(input: SignupOrganizationInput) {
     await session.commitTransaction();
     session.endSession();
 
-    // 6. Generate access and refresh tokens for the created admin user (outside the transaction)
-    const accessToken = generateAccessToken({
-      userId: adminUser._id.toString(),
-      organizationId: organization._id.toString(),
-      isSuperAdmin: false,
-    });
-
-    const { token: refreshToken, hashedToken } = generateRefreshToken();
-    const expiresAt = getExpiryDate(env.JWT_REFRESH_EXPIRY);
-
-    // Update refresh tokens list for the admin user
-    await User.findByIdAndUpdate(adminUser._id, {
-      $push: {
-        refreshTokens: {
-          token: hashedToken,
-          createdAt: new Date(),
-          expiresAt,
-          userAgent: input.userAgent,
-          ipAddress: input.ipAddress,
-        },
-      },
-      $set: {
-        lastLoginAt: new Date(),
-      },
-    });
-
-    // Remove sensitive fields from user response
+    // NOTE: No tokens are issued here. The organization is created with
+    // approvalStatus: "pending" (schema default) and cannot authenticate until
+    // a Super Admin approves it via the platform organization review API.
     const { passwordHash: _passwordHash, refreshTokens: _refreshTokens, ...userResponse } = adminUser.toObject();
 
     return {
       organization,
       user: userResponse,
-      accessToken,
-      refreshToken,
     };
   } catch (error) {
     // Abort transaction on any failure to guarantee database consistency
     await session.abortTransaction();
     session.endSession();
+
+    // Concurrent duplicate application caught by the pending-applicant unique index
+    const dupKey = error as { code?: number; keyPattern?: Record<string, unknown> };
+    if (dupKey.code === 11000 && dupKey.keyPattern?.applicantEmail) {
+      throw new ApiError(409, "An organization application with this admin email already exists.");
+    }
     throw error;
+  }
+}
+
+/**
+ * Public entry point. Concurrent signups for the same applicant collide on the pending
+ * unique index as a transient WriteConflict rather than E11000, so retry a few times:
+ * once the winner commits, the retry sees its org in the pre-check and returns a clean 409.
+ */
+export async function signupOrganization(input: SignupOrganizationInput) {
+  const maxAttempts = 4;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await signupOrganizationOnce(input);
+    } catch (error) {
+      const labels = (error as { errorLabels?: string[] }).errorLabels;
+      const transient = Array.isArray(labels) && labels.includes("TransientTransactionError");
+      if (!transient || attempt >= maxAttempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+    }
   }
 }

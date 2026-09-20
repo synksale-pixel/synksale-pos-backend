@@ -26,21 +26,24 @@ import { env } from "../config/env.config";
 export const signup = asyncHandler(async (req: Request, res: Response) => {
   const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
-  const result = await signupOrganization({
-    ...req.body,
-    ipAddress: String(ipAddress),
-    userAgent: req.headers["user-agent"],
-  });
+  const result = await signupOrganization(req.body);
 
   logger.info(
-    `[TENANT_AUTH] Successful organization signup: ${result.organization.name} (ID: ${result.organization._id}) and admin email: ${req.body.adminEmail} from IP: ${ipAddress}`
+    `[TENANT_AUTH] Organization application submitted (pending approval): ${result.organization.name} (ID: ${result.organization._id}) and admin email: ${req.body.adminEmail} from IP: ${ipAddress}`
   );
 
   res.status(201).json(
     new ApiResponse(
       201,
-      result,
-      "Organization and administrator account registered successfully."
+      {
+        organization: {
+          id: result.organization._id,
+          name: result.organization.name,
+          slug: result.organization.slug,
+          approvalStatus: result.organization.approvalStatus,
+        },
+      },
+      "Application received. You will be notified once your organization is approved."
     )
   );
 });
@@ -89,8 +92,22 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     throw new ApiError(401, "Invalid credentials");
   }
 
-  // 4. Safe post-verification check: verify activation states
+  // 4. Safe post-verification check: verify approval and activation states
   // Since password verification succeeded, enumeration risk is resolved.
+  if (organization.approvalStatus === "pending") {
+    logger.warn(
+      `[TENANT_AUTH] Failed login attempt for email: ${email} in org: ${orgSlug} from IP: ${ipAddress} - Reason: Organization pending approval`
+    );
+    throw new ApiError(403, "Your organization application is still pending review.");
+  }
+
+  if (organization.approvalStatus === "rejected") {
+    logger.warn(
+      `[TENANT_AUTH] Failed login attempt for email: ${email} in org: ${orgSlug} from IP: ${ipAddress} - Reason: Organization application rejected`
+    );
+    throw new ApiError(403, "Your organization application was not approved.");
+  }
+
   if (!organization.isActive) {
     logger.warn(
       `[TENANT_AUTH] Failed login attempt for email: ${email} in org: ${orgSlug} from IP: ${ipAddress} - Reason: Organization suspended`

@@ -30,6 +30,10 @@ async function startServer(): Promise<void> {
         `🚀 Server started on port ${env.PORT} in [${env.NODE_ENV}] mode.`
       );
       logger.info(`🔗 Health Check: http://127.0.0.1:${env.PORT}/health`);
+      // Swagger UI is only mounted outside production (see app.ts)
+      if (env.NODE_ENV !== "production") {
+        logger.info(`📚 API Docs: http://127.0.0.1:${env.PORT}/api-docs`);
+      }
     });
   } catch (error) {
     logger.error("Failed to start server due to connection error", { error });
