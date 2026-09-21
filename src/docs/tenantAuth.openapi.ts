@@ -25,7 +25,7 @@ import {
 } from "./common";
 
 const security = [{ tenantBearerAuth: [] }];
-const tags = ["Tenant Auth"];
+const tags = ["Organization Auth"];
 
 registry.registerPath({
   method: "post",
@@ -93,7 +93,7 @@ registry.registerPath({
   tags,
   summary: "Rotate tokens (public)",
   description:
-    "Public. Exchanges a valid tenant refresh token for a NEW access token and a NEW refresh token. The old refresh token is invalidated immediately (rotation), so always persist the new one. The response contains only `accessToken`, `refreshToken` and `user` (no organization object).",
+    "Public. Exchanges a valid tenant refresh token for a NEW access token and a NEW refresh token. The old refresh token is invalidated immediately (single-use rotation), so always persist the new one. If an old (already used) refresh token is sent again, it is treated as possible theft: ALL sessions of that user are logged out and a fresh login is required (401). The response contains only `accessToken`, `refreshToken` and `user` (no organization object).",
   request: { body: { required: true, content: json(refreshSchema) } },
   responses: {
     200: {

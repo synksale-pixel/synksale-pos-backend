@@ -21,7 +21,7 @@ import {
 } from "./common";
 
 const security = [{ platformBearerAuth: [] }];
-const tags = ["Platform Auth"];
+const tags = ["Platform Super Admin Auth"];
 const base = `${API}/platform/auth`;
 
 registry.registerPath({

@@ -18,7 +18,7 @@ import {
 } from "./common";
 
 const security = [{ platformBearerAuth: [] }];
-const tags = ["Platform Organizations"];
+const tags = ["Platform Organization Review"];
 const base = `${API}/platform/organizations`;
 const note =
   "Requires a **platform** (Super Admin) bearer token; a tenant token is rejected with 401. No per-permission check: any Super Admin may call it. Not store-scoped.";

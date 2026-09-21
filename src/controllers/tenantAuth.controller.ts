@@ -12,7 +12,10 @@ import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
 import { logger } from "../config/logger.config";
 import { signupOrganization } from "../services/organizationSignup.service";
-import { generateAccessToken, generateRefreshToken } from "../services/auth.service";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+} from "../services/auth.service";
 import { hashToken, getExpiryDate } from "../utils/token.util";
 import { Organization } from "../models/organization.model";
 import { User } from "../models/user.model";
@@ -24,7 +27,8 @@ import { env } from "../config/env.config";
  * Atomically registers a new organization, seeds standard roles, and creates the admin user.
  */
 export const signup = asyncHandler(async (req: Request, res: Response) => {
-  const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const ipAddress =
+    req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
   const result = await signupOrganization(req.body);
 
@@ -55,10 +59,13 @@ export const signup = asyncHandler(async (req: Request, res: Response) => {
  */
 export const login = asyncHandler(async (req: Request, res: Response) => {
   const { orgSlug, email, password } = req.body;
-  const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const ipAddress =
+    req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
   // 1. Resolve organization by slug
-  const organization = await Organization.findOne({ slug: orgSlug.toLowerCase() });
+  const organization = await Organization.findOne({
+    slug: orgSlug.toLowerCase(),
+  });
 
   // Anti-enumeration check: if organization is not found, throw generic 401
   if (!organization) {
@@ -98,7 +105,10 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     logger.warn(
       `[TENANT_AUTH] Failed login attempt for email: ${email} in org: ${orgSlug} from IP: ${ipAddress} - Reason: Organization pending approval`
     );
-    throw new ApiError(403, "Your organization application is still pending review.");
+    throw new ApiError(
+      403,
+      "Your organization application is still pending review."
+    );
   }
 
   if (organization.approvalStatus === "rejected") {
@@ -112,14 +122,20 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     logger.warn(
       `[TENANT_AUTH] Failed login attempt for email: ${email} in org: ${orgSlug} from IP: ${ipAddress} - Reason: Organization suspended`
     );
-    throw new ApiError(403, "Access Denied: Your organization account has been suspended.");
+    throw new ApiError(
+      403,
+      "Access Denied: Your organization account has been suspended."
+    );
   }
 
   if (!user.isActive) {
     logger.warn(
       `[TENANT_AUTH] Failed login attempt for email: ${email} in org: ${orgSlug} from IP: ${ipAddress} - Reason: User deactivated`
     );
-    throw new ApiError(403, "Access Denied: Your user account has been deactivated.");
+    throw new ApiError(
+      403,
+      "Access Denied: Your user account has been deactivated."
+    );
   }
 
   // 5. Generate session tokens
@@ -176,7 +192,8 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
  */
 export const refresh = asyncHandler(async (req: Request, res: Response) => {
   const { refreshToken } = req.body;
-  const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const ipAddress =
+    req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   const hashedToken = hashToken(refreshToken);
 
   // Find non-super-admin user holding this hashed refresh token
@@ -186,9 +203,25 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
   });
 
   if (!user) {
-    logger.warn(
-      `[TENANT_AUTH] Failed refresh attempt from IP: ${ipAddress} - Reason: Invalid refresh token`
+    // Reuse detection: a rotated-out token being replayed suggests it was stolen,
+    // so revoke every session for that user and force a fresh login.
+    const compromisedUser = await User.findOneAndUpdate(
+      {
+        isSuperAdmin: false,
+        "usedRefreshTokens.token": hashedToken,
+      },
+      { $set: { refreshTokens: [], usedRefreshTokens: [] } }
     );
+
+    if (compromisedUser) {
+      logger.warn(
+        `[TENANT_AUTH] Refresh token reuse detected for user: ${compromisedUser._id} from IP: ${ipAddress} - All sessions revoked`
+      );
+    } else {
+      logger.warn(
+        `[TENANT_AUTH] Failed refresh attempt from IP: ${ipAddress} - Reason: Invalid refresh token`
+      );
+    }
     throw new ApiError(
       401,
       "Authentication failed: Invalid or expired refresh token."
@@ -205,7 +238,9 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
     );
   }
 
-  const tokenIndex = user.refreshTokens.findIndex((t) => t.token === hashedToken);
+  const tokenIndex = user.refreshTokens.findIndex(
+    (t) => t.token === hashedToken
+  );
   const storedToken = user.refreshTokens[tokenIndex];
 
   // Validate expiration
@@ -232,6 +267,17 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
 
   const newRefreshToken = generateRefreshToken();
   const expiresAt = getExpiryDate(env.JWT_REFRESH_EXPIRY);
+
+  // Remember the consumed token (until it would have expired) for reuse detection,
+  // pruning entries that can no longer be replayed anyway.
+  const now = new Date();
+  user.usedRefreshTokens = (user.usedRefreshTokens ?? []).filter(
+    (t) => t.expiresAt > now
+  );
+  user.usedRefreshTokens.push({
+    token: hashedToken,
+    expiresAt: storedToken.expiresAt,
+  });
 
   user.refreshTokens[tokenIndex] = {
     token: newRefreshToken.hashedToken,
@@ -270,7 +316,8 @@ export const refresh = asyncHandler(async (req: Request, res: Response) => {
  */
 export const logout = asyncHandler(async (req: Request, res: Response) => {
   const { refreshToken } = req.body;
-  const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+  const ipAddress =
+    req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
   const hashedToken = hashToken(refreshToken);
 
   const user = await User.findOne({
@@ -279,7 +326,9 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
   });
 
   if (user) {
-    user.refreshTokens = user.refreshTokens.filter((t) => t.token !== hashedToken);
+    user.refreshTokens = user.refreshTokens.filter(
+      (t) => t.token !== hashedToken
+    );
     await user.save();
 
     logger.info(
@@ -298,21 +347,26 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
  * Tenant Logout All Devices:
  * Clears all active refresh tokens for the authenticated tenant user.
  */
-export const logoutAllDevices = asyncHandler(async (req: Request, res: Response) => {
-  const user = req.user!;
-  const ipAddress = req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+export const logoutAllDevices = asyncHandler(
+  async (req: Request, res: Response) => {
+    const user = req.user!;
+    const ipAddress =
+      req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
-  user.refreshTokens = [];
-  await user.save();
+    user.refreshTokens = [];
+    await user.save();
 
-  logger.info(
-    `[TENANT_AUTH] Successful logout from all devices for user: ${user._id} from IP: ${ipAddress}`
-  );
+    logger.info(
+      `[TENANT_AUTH] Successful logout from all devices for user: ${user._id} from IP: ${ipAddress}`
+    );
 
-  res.status(200).json(
-    new ApiResponse(200, null, "Logged out from all devices successfully")
-  );
-});
+    res
+      .status(200)
+      .json(
+        new ApiResponse(200, null, "Logged out from all devices successfully")
+      );
+  }
+);
 
 /**
  * Me/Profile Endpoint:

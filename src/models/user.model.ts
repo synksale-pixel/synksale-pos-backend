@@ -16,6 +16,13 @@ export interface IRefreshToken {
   ipAddress?: string;
 }
 
+// Hashes of rotated-out refresh tokens, kept until they would have expired so that
+// replaying one can be detected as a possible token theft.
+export interface IUsedRefreshToken {
+  token: string; // SHA-256 hashed refresh token
+  expiresAt: Date;
+}
+
 export interface IStoreAccess {
   storeId: mongoose.Types.ObjectId;
   roleId: mongoose.Types.ObjectId;
@@ -31,6 +38,7 @@ export interface IUser {
   orgRoleId: mongoose.Types.ObjectId | null;
   storeAccess: IStoreAccess[];
   refreshTokens: IRefreshToken[];
+  usedRefreshTokens: IUsedRefreshToken[];
   isActive: boolean;
   isDelete: boolean;
   lastLoginAt: Date | null;
@@ -75,6 +83,14 @@ const refreshTokenSchema = new Schema<IRefreshToken>({
   userAgent: String,
   ipAddress: String,
 });
+
+const usedRefreshTokenSchema = new Schema<IUsedRefreshToken>(
+  {
+    token: { type: String, required: true, index: true },
+    expiresAt: { type: Date, required: true },
+  },
+  { _id: false }
+);
 
 const storeAccessSchema = new Schema<IStoreAccess>({
   storeId: {
@@ -141,6 +157,7 @@ const userSchema = new Schema<
     },
     storeAccess: [storeAccessSchema], // Array of store-specific roles (supports multi-store staff)
     refreshTokens: [refreshTokenSchema], // Supports multi-device login sessions
+    usedRefreshTokens: [usedRefreshTokenSchema], // Rotated-out tokens, for reuse detection
     isActive: {
       type: Boolean,
       default: true,
@@ -276,6 +293,7 @@ userSchema.methods.comparePassword = async function (
 const cleanTransform = (_doc: any, ret: any) => {
   delete ret.passwordHash;
   delete ret.refreshTokens;
+  delete ret.usedRefreshTokens;
   delete ret.inviteToken;
   delete ret.inviteTokenExpiresAt;
   delete ret.__v;
