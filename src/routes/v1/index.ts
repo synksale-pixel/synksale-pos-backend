@@ -9,6 +9,7 @@ import platformAuthRouter from "./platformAuth.routes";
 import platformOrganizationRouter from "./platformOrganization.routes";
 import tenantAuthRouter from "./tenantAuth.routes";
 import userInviteRouter from "./userInvite.routes";
+import storeRouter from "./store.routes";
 
 const v1Router = Router();
 
@@ -31,5 +32,6 @@ v1Router.use("/platform/auth", platformAuthRouter);
 v1Router.use("/platform/organizations", platformOrganizationRouter);
 v1Router.use("/auth", tenantAuthRouter);
 v1Router.use("/users", userInviteRouter);
+v1Router.use("/stores", storeRouter);
 
 export default v1Router;

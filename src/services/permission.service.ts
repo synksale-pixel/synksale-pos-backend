@@ -32,9 +32,8 @@ export async function getEffectivePermissions(
 
   // 2. Fetch Organization-level permissions (if orgRoleId is assigned)
   if (user.orgRoleId) {
-    const orgRole = (await Role.findById(user.orgRoleId).lean().exec()) as
-      (IRole & { isActive?: boolean }) | null;
-    if (orgRole && orgRole.isActive !== false) {
+    const orgRole = (await Role.findById(user.orgRoleId).lean().exec()) as IRole | null;
+    if (orgRole) {
       orgRole.permissions.forEach((perm) => permissionsSet.add(perm));
     }
   }
@@ -48,14 +47,29 @@ export async function getEffectivePermissions(
     if (matchingAccess) {
       const storeRole = (await Role.findById(matchingAccess.roleId)
         .lean()
-        .exec()) as (IRole & { isActive?: boolean }) | null;
-      if (storeRole && storeRole.isActive !== false) {
+        .exec()) as IRole | null;
+      if (storeRole) {
         storeRole.permissions.forEach((perm) => permissionsSet.add(perm));
       }
     }
   }
 
   return Array.from(permissionsSet);
+}
+
+/**
+ * True when the user holds an (undeleted) organization-scoped role such as org_admin.
+ * Requires `user.orgRoleId` to be populated (the authenticate middleware does this).
+ */
+export function hasOrganizationScopeRole(user: IUser): boolean {
+  const orgRole = user.orgRoleId as unknown as IRole | null;
+  return (
+    !!orgRole &&
+    typeof orgRole === "object" &&
+    "scope" in orgRole &&
+    orgRole.scope === "organization" &&
+    orgRole.isDelete !== true
+  );
 }
 
 // Scope hierarchy ranking for privilege escalation checks

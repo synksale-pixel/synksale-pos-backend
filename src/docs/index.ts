@@ -5,5 +5,6 @@
 import "./health.openapi";
 import "./tenantAuth.openapi";
 import "./userInvite.openapi";
+import "./store.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";

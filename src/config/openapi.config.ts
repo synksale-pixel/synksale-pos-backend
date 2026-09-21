@@ -35,7 +35,7 @@ const API_DESCRIPTION = [
   "",
   "| Who | Log in at | Token scheme | Used for |",
   "| --- | --- | --- | --- |",
-  "| Organization users (owners, staff) | `POST /api/v1/auth/login` | `tenantBearerAuth` | `/auth/*`, `/users/*` |",
+  "| Organization users (owners, staff) | `POST /api/v1/auth/login` | `tenantBearerAuth` | `/auth/*`, `/users/*`, `/stores/*` |",
   "| SynkSale super admins | `POST /api/v1/platform/auth/login` | `platformBearerAuth` | `/platform/*` |",
   "",
   "These are separate systems. A token from one is rejected by the other with a **401**.",
@@ -93,7 +93,8 @@ const API_DESCRIPTION = [
   "",
   "## Permissions and stores",
   "- Some endpoints need a **permission** (for example `user:invite`). It is shown in the endpoint's description. Without it you get a **403**, even with a valid token.",
-  "- On store-based endpoints, the `storeId` must be a store the user is assigned to (unless they hold an organization-wide role). Otherwise you get a **403**.",
+  "- On store-based endpoints, the `storeId` must be a store the user is assigned to (unless they hold an organization-wide role). Otherwise you get a **403**. A malformed `storeId` gives **400**, and a store that does not exist in your organization gives **404**.",
+  "- Stores are managed under `/api/v1/stores/*`. A **deactivated** store is rejected (403) on store-scoped endpoints such as inviting staff, but stays reachable under `/stores/*` so it can be reactivated (activate/deactivate need an organization-wide role).",
   "- Super admins have full access.",
 ].join("\n");
 
@@ -120,6 +121,7 @@ export function generateOpenApiDocument() {
       { name: "Platform Super Admin Auth", description: "Sign-in and tokens for SynkSale super admins." },
       { name: "Organization Auth", description: "Sign up, log in, tokens and profile for organization users." },
       { name: "Platform Organization Review", description: "Super admins review, approve or reject new organizations." },
+      { name: "Stores", description: "Create and manage an organization's stores (locations)." },
       { name: "User Invites", description: "Invite staff to an organization and accept invitations." },
     ],
   });

@@ -8,6 +8,7 @@
 import mongoose from "mongoose";
 import { User, IUser } from "../models/user.model";
 import { Role } from "../models/role.model";
+import { Store } from "../models/store.model";
 import { getEffectivePermissions, canGrantRole } from "./permission.service";
 import { generateAccessToken, generateRefreshToken } from "./auth.service";
 import { generateOpaqueToken, hashToken, getExpiryDate } from "../utils/token.util";
@@ -114,10 +115,22 @@ export async function inviteUser(input: InviteUserInput) {
     if (!input.storeId) {
       throw new ApiError(400, "Store context is required for assigning a store-scoped role.");
     }
+    // The store must exist in this organization and be active before anyone is assigned to it.
+    const store = await Store.findOne({
+      _id: input.storeId,
+      organizationId: input.organizationId,
+    });
+    if (!store) {
+      throw new ApiError(404, "Store not found or does not belong to your organization.");
+    }
+    if (!store.isActive) {
+      throw new ApiError(400, "Cannot assign a user to a deactivated store.");
+    }
+
     userData.orgRoleId = null;
     userData.storeAccess = [
       {
-        storeId: new mongoose.Types.ObjectId(input.storeId),
+        storeId: store._id,
         roleId: targetRole._id,
       },
     ];

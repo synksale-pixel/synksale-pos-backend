@@ -8,9 +8,12 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { ApiError } from "../utils/ApiError";
 import { getRequestContext } from "../utils/requestContext";
 import { verifyAccessToken } from "../services/auth.service";
-import { getEffectivePermissions } from "../services/permission.service";
+import {
+  getEffectivePermissions,
+  hasOrganizationScopeRole,
+} from "../services/permission.service";
 import { User, UserDocument } from "../models/user.model";
-import { IRole } from "../models/role.model";
+import { Store } from "../models/store.model";
 import { IOrganization } from "../models/organization.model";
 import { PermissionKey } from "../config/permissions.catalog";
 
@@ -104,8 +107,10 @@ export const authenticate = asyncHandler(
  *
  * CRITICAL: This must run BEFORE any controller queries so that the tenant scoping plugin filters query boundaries.
  */
-export const scopeToStore = asyncHandler(
-  async (req: Request, _res: Response, next: NextFunction) => {
+const OBJECT_ID_REGEX = /^[0-9a-fA-F]{24}$/;
+
+const createScopeToStore = (allowInactive: boolean) =>
+  asyncHandler(async (req: Request, _res: Response, next: NextFunction) => {
     if (!req.user) {
       throw new ApiError(
         401,
@@ -115,7 +120,7 @@ export const scopeToStore = asyncHandler(
 
     const storeId =
       (req.params.storeId as string) ||
-      (req.body.storeId as string) ||
+      (req.body?.storeId as string) ||
       (req.query.storeId as string);
 
     // If no store context is requested, proceed normally
@@ -123,29 +128,25 @@ export const scopeToStore = asyncHandler(
       return next();
     }
 
+    if (typeof storeId !== "string" || !OBJECT_ID_REGEX.test(storeId)) {
+      throw new ApiError(400, "Invalid storeId format. Must be a 24-character hex string.");
+    }
+
     let isAuthorized = false;
 
     // 1. Super Admins bypass store access boundary checks
     if (req.user.isSuperAdmin) {
       isAuthorized = true;
-    } else {
-      // 2. Organization-scoped roles (like Org Admin) bypass specific store access check
-      const orgRole = req.user.orgRoleId as unknown as IRole | null;
-      if (
-        orgRole &&
-        typeof orgRole === "object" &&
-        "scope" in orgRole &&
-        orgRole.scope === "organization" &&
-        orgRole.isDelete !== true
-      ) {
-        isAuthorized = true;
-      }
-      // 3. Otherwise, check explicit user store access array
-      else if (req.user.storeAccess && req.user.storeAccess.length > 0) {
-        isAuthorized = req.user.storeAccess.some(
-          (access) => access.storeId.toString() === storeId
-        );
-      }
+    }
+    // 2. Organization-scoped roles (like Org Admin) bypass specific store access check
+    else if (hasOrganizationScopeRole(req.user)) {
+      isAuthorized = true;
+    }
+    // 3. Otherwise, check explicit user store access array
+    else if (req.user.storeAccess && req.user.storeAccess.length > 0) {
+      isAuthorized = req.user.storeAccess.some(
+        (access) => access.storeId.toString() === storeId
+      );
     }
 
     if (!isAuthorized) {
@@ -155,6 +156,23 @@ export const scopeToStore = asyncHandler(
       );
     }
 
+    // Verify the store exists in the caller's organization (Store is org-scoped by the tenant
+    // plugin, so a foreign or deleted store is not found) before it enters request context.
+    // Pass the caller's organization explicitly rather than relying only on the token claim
+    // in the request context (super admins have no organization, so they stay unscoped).
+    const callerOrg = req.user.organizationId as unknown as { _id: unknown } | null;
+    const storeFilter: Record<string, unknown> = { _id: storeId };
+    if (callerOrg) {
+      storeFilter.organizationId = callerOrg._id;
+    }
+    const store = await Store.findOne(storeFilter);
+    if (!store) {
+      throw new ApiError(404, "Store not found.");
+    }
+    if (!allowInactive && !store.isActive) {
+      throw new ApiError(403, "Access Denied: This store has been deactivated.");
+    }
+
     // Safely register storeId into request context
     const context = getRequestContext();
     if (context) {
@@ -162,8 +180,42 @@ export const scopeToStore = asyncHandler(
     }
 
     next();
+  });
+
+export const scopeToStore = createScopeToStore(false);
+
+/**
+ * Same as scopeToStore but lets requests through for deactivated stores.
+ * Only for store-management routes (view / update / reactivate).
+ */
+export const scopeToStoreAllowInactive = createScopeToStore(true);
+
+/**
+ * requireOrganizationRole Middleware:
+ * Restricts a route to users holding an organization-scoped role (e.g. org_admin) or super admins,
+ * so store-scoped staff cannot perform organization-level actions even if their store role
+ * carries the route's permission. Use together with `authorize`, not instead of it.
+ */
+export const requireOrganizationRole = (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+) => {
+  if (!req.user) {
+    return next(
+      new ApiError(401, "Authorization failed: Request user is not authenticated.")
+    );
   }
-);
+  if (!req.user.isSuperAdmin && !hasOrganizationScopeRole(req.user)) {
+    return next(
+      new ApiError(
+        403,
+        "Access Denied: This action requires an organization-level role."
+      )
+    );
+  }
+  next();
+};
 
 /**
  * authorize Middleware:

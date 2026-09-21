@@ -246,6 +246,43 @@ export const OrganizationListDataSchema = z
   })
   .openapi("OrganizationListData");
 
+export const StoreSchema = z
+  .object({
+    _id: objectId("665f1c2e8a4b3c0012ab34ef"),
+    id: objectId("665f1c2e8a4b3c0012ab34ef"),
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    name: z.string().openapi({ example: "Sharma Store - Indiranagar" }),
+    code: z.string().openapi({ description: "Unique within the organization, uppercase.", example: "BLR-001" }),
+    address: z.object({
+      line1: z.string().openapi({ example: "12, 100 Feet Road" }),
+      line2: z.string().optional().openapi({ example: "Indiranagar" }),
+      city: z.string().openapi({ example: "Bengaluru" }),
+      state: z.string().openapi({ example: "Karnataka" }),
+      country: z.string().openapi({ example: "India" }),
+      postalCode: z.string().openapi({ example: "560038" }),
+    }),
+    timezone: z.string().openapi({ example: "Asia/Kolkata" }),
+    isActive: z.boolean().openapi({ example: true }),
+    isDelete: z.boolean().openapi({ example: false }),
+    createdAt: isoDate("2026-05-01T09:30:00.000Z"),
+    updatedAt: isoDate("2026-05-01T09:30:00.000Z"),
+  })
+  .openapi("Store");
+
+export const StoreDataSchema = z.object({ store: StoreSchema }).openapi("StoreData");
+
+export const StoreListDataSchema = z
+  .object({
+    stores: z.array(StoreSchema),
+    pagination: z.object({
+      page: z.number().int().openapi({ example: 1 }),
+      limit: z.number().int().openapi({ example: 20 }),
+      total: z.number().int().openapi({ description: "Total matching stores.", example: 3 }),
+      totalPages: z.number().int().openapi({ example: 1 }),
+    }),
+  })
+  .openapi("StoreListData");
+
 export const HealthInfraSchema = z
   .object({
     status: z.literal("healthy"),
