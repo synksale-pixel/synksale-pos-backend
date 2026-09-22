@@ -8,7 +8,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { inviteUser, acceptInvite } from "../services/userInvite.service";
 import { ApiResponse } from "../utils/ApiResponse";
-import { ApiError } from "../utils/ApiError";
+import { resolveOrganizationId } from "../utils/requestOrganization";
 
 /**
  * Invite User:
@@ -17,21 +17,9 @@ import { ApiError } from "../utils/ApiError";
  */
 export const invite = asyncHandler(async (req: Request, res: Response) => {
   const invitingUser = req.user!;
-  
-  if (!invitingUser.organizationId) {
-    throw new ApiError(
-      400,
-      "Access Denied: You must belong to an organization to invite users."
-    );
-  }
+  const organizationId = resolveOrganizationId(req, "invite users");
 
   const { email, firstName, lastName, roleId, storeId } = req.body;
-
-  // organizationId is populated (a full Organization document) by the `authenticate`
-  // middleware, not a bare ObjectId — resolve its `_id` explicitly rather than calling
-  // .toString() on the document itself.
-  const orgRef = invitingUser.organizationId as unknown as { _id: { toString(): string } };
-  const organizationId = orgRef._id.toString();
 
   const result = await inviteUser({
     organizationId,
@@ -43,7 +31,9 @@ export const invite = asyncHandler(async (req: Request, res: Response) => {
     invitedByUserId: invitingUser._id.toString(),
   });
 
-  // TODO: replace with actual email delivery once an email service is integrated — do not log the plaintext invite token to Winston, only return it in the response
+  // TODO: integrate an email service. Until then the invite link is returned in the response
+  // OUTSIDE production only (see buildInviteDelivery); in production `delivery` comes back as
+  // "email_pending" and the invitee cannot be reached, so this is a launch blocker.
 
   res.status(201).json(
     new ApiResponse(

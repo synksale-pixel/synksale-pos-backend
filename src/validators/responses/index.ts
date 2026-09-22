@@ -56,6 +56,16 @@ export const ErrorResponseSchema = z
   })
   .openapi("ErrorResponse");
 
+/** The pagination block returned by every paginated list endpoint. */
+export const PaginationSchema = z
+  .object({
+    page: z.number().int().openapi({ example: 1 }),
+    limit: z.number().int().openapi({ example: 20 }),
+    total: z.number().int().openapi({ description: "Total matching records.", example: 42 }),
+    totalPages: z.number().int().openapi({ example: 3 }),
+  })
+  .openapi("Pagination");
+
 // ---------- Domain objects ----------
 
 const objectId = (example: string, description?: string) =>
@@ -215,13 +225,19 @@ export const InviteDataSchema = z
     user: UserSchema.openapi({
       description: "The created pending user (isActive=false, inviteStatus=pending).",
     }),
-    inviteToken: z.string().openapi({
+    delivery: z.enum(["response", "email_pending"]).openapi({
       description:
-        "Plaintext invite token. Returned ONLY in this response (only its hash is stored). No email is sent by the backend.",
+        "How the invitee receives the link. Outside production this is `response` and the two fields below are present. In production it is `email_pending`, `inviteToken`/`inviteLink` are OMITTED (a plaintext token must not travel through response logs), and no email service is wired up yet — so production invites are not deliverable.",
+      example: "response",
+    }),
+    inviteToken: z.string().optional().openapi({
+      description:
+        "Plaintext invite token. Only its hash is stored, and it is returned ONLY outside production.",
       example: "b7d1f0c39a8e4d2f6c5b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706",
     }),
-    inviteLink: z.string().openapi({
-      description: "Frontend URL to hand to the invitee: <FRONTEND_URL>/accept-invite?token=<inviteToken>.",
+    inviteLink: z.string().optional().openapi({
+      description:
+        "Frontend URL to hand to the invitee: <FRONTEND_URL>/accept-invite?token=<inviteToken>. Returned ONLY outside production.",
       example:
         "https://app.synksale.com/accept-invite?token=b7d1f0c39a8e4d2f6c5b1a0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a39281706",
     }),
@@ -237,12 +253,7 @@ export const PlatformLoginDataSchema = TokenPairSchema.extend({
 export const OrganizationListDataSchema = z
   .object({
     organizations: z.array(OrganizationSchema),
-    pagination: z.object({
-      page: z.number().int().openapi({ example: 1 }),
-      limit: z.number().int().openapi({ example: 20 }),
-      total: z.number().int().openapi({ description: "Total matching organizations.", example: 42 }),
-      totalPages: z.number().int().openapi({ example: 3 }),
-    }),
+    pagination: PaginationSchema,
   })
   .openapi("OrganizationListData");
 
@@ -274,14 +285,43 @@ export const StoreDataSchema = z.object({ store: StoreSchema }).openapi("StoreDa
 export const StoreListDataSchema = z
   .object({
     stores: z.array(StoreSchema),
-    pagination: z.object({
-      page: z.number().int().openapi({ example: 1 }),
-      limit: z.number().int().openapi({ example: 20 }),
-      total: z.number().int().openapi({ description: "Total matching stores.", example: 3 }),
-      totalPages: z.number().int().openapi({ example: 1 }),
-    }),
+    pagination: PaginationSchema,
   })
   .openapi("StoreListData");
+
+/** A roster user: orgRoleId is POPULATED (full Role object) on the staff endpoints. */
+export const StaffUserSchema = UserSchema.extend({
+  orgRoleId: RoleSchema.nullable().openapi({
+    description:
+      "Populated Role object (not a bare ID) on the staff endpoints. null if the user holds no organization-wide role.",
+  }),
+}).openapi("StaffUser");
+
+export const UserDataSchema = z.object({ user: StaffUserSchema }).openapi("UserData");
+
+export const UserListDataSchema = z
+  .object({
+    users: z.array(StaffUserSchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("UserListData");
+
+export const RoleListDataSchema = z
+  .object({ roles: z.array(RoleSchema) })
+  .openapi("RoleListData");
+
+export const PermissionCatalogDataSchema = z
+  .object({
+    permissions: z.array(
+      z.object({
+        key: z.string().openapi({ example: "sale:create" }),
+        label: z.string().openapi({ example: "Create Sales" }),
+        category: z.string().openapi({ example: "Sales" }),
+        minScope: z.enum(["platform", "organization", "store"]).openapi({ example: "store" }),
+      })
+    ),
+  })
+  .openapi("PermissionCatalogData");
 
 export const HealthInfraSchema = z
   .object({

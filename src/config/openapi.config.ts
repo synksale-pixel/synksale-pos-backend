@@ -123,6 +123,8 @@ export function generateOpenApiDocument() {
       { name: "Platform Organization Review", description: "Super admins review, approve or reject new organizations." },
       { name: "Stores", description: "Create and manage an organization's stores (locations)." },
       { name: "User Invites", description: "Invite staff to an organization and accept invitations." },
+      { name: "Staff Management", description: "Read the staff roster and manage an existing user's roles, store assignments and access." },
+      { name: "Roles", description: "Read the organization's roles and the permission catalog (needed to resolve a roleId)." },
     ],
   });
 }

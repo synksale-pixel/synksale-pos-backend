@@ -418,3 +418,157 @@ signup -> pending --approve--> approved --(isActive=false)--> suspended
 |---|---|---|
 | Access | 15m (`JWT_ACCESS_EXPIRY`) | 10m (`JWT_PLATFORM_ACCESS_EXPIRY`) |
 | Refresh (rotating) | 7d (`JWT_REFRESH_EXPIRY`) | 3d (`JWT_PLATFORM_REFRESH_EXPIRY`) |
+
+---
+
+## 👥 Staff Management (Phase 0 + Phase 1)
+
+Before this work an organization admin could create Store B but had no way to staff it: the only
+endpoints under `/users` were "send invite" and "accept invite". There was no way to list staff,
+assign an existing employee to another store, change anyone's role, or — critically — **turn off
+a departing employee**. `user.isActive` was enforced in `authenticate` and on refresh, but nothing
+in the API could ever set it to `false`.
+
+Identity was settled before the POS domain deliberately: sales and inventory records will carry
+`createdBy`/`storeId`, and once a ledger references users the assignment model is expensive to
+change.
+
+### Phase 0 — Foundations
+
+**1. New permissions (`permissions.catalog.ts`)**
+`user:read` (view the roster) and `user:manage` (activate/deactivate). Reusing `user:invite` as
+the gate for reading staff would have been semantic drift. `user:invite` and `user:read` are now
+`minScope: "store"`, and `store_manager` holds both: a store manager hiring a cashier for their
+own store is normal retail, and the privilege ceiling still stops them granting anything above
+themselves.
+
+**2. System role reconcile (`syncSystemRolePermissions`)**
+`seedDefaultRolesForOrganization` is idempotent *by slug* — an existing role is skipped entirely,
+permissions untouched. So adding a catalog key never reached organizations seeded earlier, and
+their `org_admin` would silently 403 on any endpoint guarding the new key. The reconcile unions in
+missing template permissions and is **additive, never subtractive**, so an organization's own
+customizations survive. Run `npm run sync:system-roles` after every catalog change.
+
+**3. Tenant scoping on `User` and `Role`**
+Neither model used `tenantScopePlugin`; every user query was hand-written with an explicit
+`organizationId` filter. With `GET /users/:userId` added, one forgotten `User.findById` would have
+been a cross-tenant read of another organization's employee record. The plugin adds no fields
+here (both schemas already define `organizationId` and `isDelete`) — only the pre-query hooks.
+Safe for the unauthenticated paths: login, refresh, accept-invite and platform auth all run with
+no organization in the request context, and `authenticate` sets the context only *after* its own
+lookup. Services still pass `organizationId` explicitly; the plugin is the backstop.
+
+**4. `canManageUser` (`permission.service.ts`)**
+`canGrantRole` answers "may you hand out this role" — it inspects only the role being assigned, so
+on its own it would let a store manager with `user:manage_roles` deactivate the organization admin
+(deactivation assigns no role). `canManageUser` adds the missing half: the actor must already hold
+every privilege the target holds, across their organization role **and** every store role.
+
+**5. `storeAccess` integrity**
+Nothing stopped two entries for the same store, and `getEffectivePermissions` resolves a store
+role with `Array.prototype.find` — so whether someone was a cashier or a manager depended on array
+insertion order. A `pre("validate")` hook now enforces one role per store. Added the two indexes
+the new queries need: `{ organizationId, "storeAccess.storeId" }` and `{ organizationId, orgRoleId }`.
+
+### Phase 1 — The staffing surface
+
+`userInvite.routes.ts` was merged into `user.routes.ts`: two routers on `/users` with overlapping
+path shapes (`/invite` vs `/:userId`) is a footgun. `POST /users/accept-invite` stays public by
+being registered before the router-level `authenticate`.
+
+| Endpoint | Gate |
+|---|---|
+| `GET /users` | `user:read` (any scope) |
+| `GET /users/:userId` | `user:read` (any scope) |
+| `PATCH /users/:userId/org-role` | organization role + `user:manage_roles` |
+| `POST /users/:userId/store-access` | `scopeToStore` + `user:manage_roles` |
+| `PATCH /users/:userId/store-access/:storeId` | `scopeToStoreAllowInactive` + `user:manage_roles` |
+| `DELETE /users/:userId/store-access/:storeId` | `scopeToStoreAllowInactive` + `user:manage_roles` |
+| `PATCH /users/:userId/deactivate` \| `/activate` | organization role + `user:manage` |
+| `POST /users/:userId/invite/resend` | `user:invite` (any scope) |
+| `DELETE /users/:userId/invite` | `user:invite` (any scope) |
+| `GET /roles`, `GET /roles/permissions` | `user:read` (any scope) |
+
+**`GET /roles` was a blocker for a feature already shipped.** `POST /users/invite` requires a
+`roleId` and nothing exposed one, so the invite endpoint was not callable from a client. Each
+organization gets its own copy of the default roles at signup, so role IDs differ per tenant and
+must not be hard-coded. It is gated on `user:read` rather than `user:manage_roles` because anyone
+who can invite staff needs to resolve a role ID.
+
+**`authorizeAnyScope` (`rbac.middleware.ts`).** `authorize` only consults a store role when a
+`storeId` is in context, which is correct for store-scoped actions but makes store-agnostic routes
+unreachable for a store manager: on `GET /users` their organization role is empty, so they were
+rejected before the service ran. `authorizeAnyScope` resolves the permission across every store
+the caller works at — it answers "may you do this somewhere", so every endpoint using it narrows
+the result itself. The same fix applies inside `loadManageableTarget`, which evaluates the actor
+across all their stores when the action names no specific store.
+
+**Visibility.** Mirrors `listStores`: organization-scoped roles see the whole roster; store-scoped
+staff see only users who share one of their stores. A user the caller cannot see is reported as
+**404, not 403**, so the endpoints cannot be used to probe who exists. The rule (`canSeeUser`) is
+applied to reads *and* mutations, so a store manager cannot resend or revoke an invite for an
+invitee at another store.
+
+**Guards on modification.**
+- *Self-protection*: you cannot change your own organization role or deactivate yourself (400).
+  Not philosophy — it is the easy path to an organization with zero admins that only a DB shell
+  can fix.
+- *Last administrator*: refuses (409) to leave the organization with no active admin. The count
+  and the update share one transaction, so two concurrent demotions cannot both pass a stale read.
+  **Note:** with the current permission set this is defense-in-depth rather than a reachable path —
+  any actor allowed to call these endpoints is themselves an active administrator and so is
+  counted. It becomes reachable as soon as custom roles (Phase 2) can separate `user:manage` from
+  `user:manage_roles`.
+- *Inactive stores*: granting access is refused; revoking is always allowed. A closed store must
+  never trap its employees. `setStoreActive` still leaves `storeAccess` intact, so reactivation
+  restores access as it was.
+- *No session invalidation on role change*: `generateAccessToken` deliberately omits permissions
+  and `authorize` resolves fresh from the database per request, so role changes take effect on the
+  next call. Deactivation additionally clears `refreshTokens`.
+
+**Delete policy.** Accepted users are **never** deleted, only deactivated — sales history will
+reference them. Pending invitees **are** hard-deleted on revoke: they have never logged in,
+nothing references them, and the unique index on `{ organizationId, email }` does not exclude
+soft-deleted rows, so a soft delete would keep the address occupied and a re-invite would 409.
+
+### Audit log
+
+`AuditLog` (org-scoped) plus `recordAudit()`, called from every privileged mutation as it was
+written rather than retrofitted later. Records role changes, store-access changes,
+activation/deactivation and the invite lifecycle — not reads, and not sales, which are their own
+ledger. An audit write never fails the request: losing a row is bad, but rolling back a completed
+role change because the audit insert failed is worse.
+
+### Invite token exposure
+
+`inviteUser` returned the plaintext token in the API response. With resend and revoke added, that
+multiplies how many plaintext tokens travel through response logs and browser devtools.
+`buildInviteDelivery` now returns the token **only outside production**; in production the response
+carries `delivery: "email_pending"` and omits `inviteToken`/`inviteLink`.
+
+**This makes production invites undeliverable until an email service is wired up — deliberately.**
+It is the remaining blocker before onboarding a real customer.
+
+### Incidental fixes
+
+- **`npm run build` was broken on `develop`.** `tsconfig.json` set `"ignoreDeprecations": "6.0"`,
+  which the installed TypeScript 5.9.3 rejects (`TS5103`). Changed to `"5.0"`; the project now
+  compiles clean.
+- **Pagination consolidated** into `resolvePaging`/`buildPaginationMeta` (`utils/pagination.ts`)
+  and a shared `PaginationSchema`. The same block had been hand-rolled in the store and platform
+  organization services and was about to become a third copy.
+- **`resolveOrganizationId`** extracted to `utils/requestOrganization.ts`; the store and invite
+  controllers each had their own copy of the same "organizationId is populated, read its `_id`"
+  logic.
+
+### Known gaps / next steps
+
+- No email service, so production invites cannot be delivered (see above).
+- No role CRUD yet (`role:manage`): `GET /roles` and `GET /roles/permissions` are read-only.
+  When it lands, block deleting a role still assigned to any user — a soft-deleted role makes
+  `getEffectivePermissions` return nothing for that store, which fails closed but silently.
+- `minScope` in the permission catalog is still advisory: nothing validates that a store-scoped
+  role cannot hold `organization:configure`. Enforce it in role creation, or drop the field.
+- Store managers can invite new staff to their own store but cannot assign an *existing* employee
+  to it (`user:manage_roles` is organization-level). Intentional for now — reassignment is a
+  cross-store action — but worth revisiting.
