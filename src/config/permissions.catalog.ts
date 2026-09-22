@@ -22,7 +22,9 @@ export type PermissionKey =
   | "report:view_store"
   | "report:view_org"
   // Admin
+  | "user:read"
   | "user:invite"
+  | "user:manage"
   | "user:manage_roles"
   | "role:manage"
   | "store:create"
@@ -120,8 +122,23 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
 
   // ===== Admin =====
   {
+    key: "user:read",
+    label: "View Staff Members",
+    category: "Admin",
+    // Store managers read the roster of their own store, so this is meaningful at store scope.
+    minScope: "store",
+  },
+  {
     key: "user:invite",
     label: "Invite Staff Members",
+    category: "Admin",
+    // A store manager hiring a cashier for their own store is normal retail; the privilege
+    // ceiling (canGrantRole) still prevents them granting a role above their own.
+    minScope: "store",
+  },
+  {
+    key: "user:manage",
+    label: "Activate/Deactivate Staff Members",
     category: "Admin",
     minScope: "organization",
   },

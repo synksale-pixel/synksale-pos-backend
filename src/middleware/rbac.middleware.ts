@@ -10,6 +10,7 @@ import { getRequestContext } from "../utils/requestContext";
 import { verifyAccessToken } from "../services/auth.service";
 import {
   getEffectivePermissions,
+  getPermissionsAcrossStores,
   hasOrganizationScopeRole,
 } from "../services/permission.service";
 import { User, UserDocument } from "../models/user.model";
@@ -246,6 +247,46 @@ export const authorize = (requiredPermission: PermissionKey) => {
       const permissions = await getEffectivePermissions(req.user, storeId);
 
       // Allow if user holds direct permission key OR wildcard
+      const hasPermission =
+        permissions.includes("*") || permissions.includes(requiredPermission);
+
+      if (!hasPermission) {
+        throw new ApiError(
+          403,
+          `Access Denied: You do not possess the required permission (${requiredPermission}) to execute this action.`
+        );
+      }
+
+      next();
+    }
+  );
+};
+
+/**
+ * authorizeAnyScope Middleware:
+ * Like `authorize`, but satisfied when the user holds the permission at ANY of their stores
+ * rather than only in the current store context.
+ *
+ * ONLY for store-agnostic endpoints (the staff roster, the role list). A store manager holds
+ * `user:read` through their store role, so on a route with no storeId `authorize` would resolve
+ * their organization role alone — an empty permission set — and reject them outright.
+ *
+ * This checks "may you do this somewhere", so any endpoint using it MUST still narrow what it
+ * returns or touches to the caller's own stores. Never use it on a route that acts on a single
+ * store: that is what `authorize` plus `scopeToStore` are for.
+ */
+export const authorizeAnyScope = (requiredPermission: PermissionKey) => {
+  return asyncHandler(
+    async (req: Request, _res: Response, next: NextFunction) => {
+      if (!req.user) {
+        throw new ApiError(
+          401,
+          "Authorization failed: Request user is not authenticated."
+        );
+      }
+
+      const permissions = await getPermissionsAcrossStores(req.user);
+
       const hasPermission =
         permissions.includes("*") || permissions.includes(requiredPermission);
 

@@ -6,6 +6,7 @@
  */
 
 import mongoose, { Schema, Document } from "mongoose";
+import { tenantScopePlugin } from "./plugins/tenantScope.plugin";
 import {
   isValidPermission,
   PermissionKey,
@@ -131,6 +132,14 @@ roleSchema.set("toObject", {
   transform: cleanTransform,
   virtuals: true,
 });
+
+/**
+ * Defense-in-depth tenant isolation (see the equivalent note in user.model.ts).
+ * organizationId and isDelete are already defined here, so only the pre-query hooks are added.
+ * Platform-scoped roles (organizationId: null) are only ever resolved outside a tenant request
+ * context, so they are not affected by the injected filter.
+ */
+roleSchema.plugin(tenantScopePlugin, { scope: "organization" });
 
 const Role = mongoose.model<IRole, RoleModel>("Role", roleSchema);
 

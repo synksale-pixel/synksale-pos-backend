@@ -9,8 +9,14 @@ import mongoose from "mongoose";
 import { User, IUser } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { Store } from "../models/store.model";
-import { getEffectivePermissions, canGrantRole } from "./permission.service";
+import {
+  getEffectivePermissions,
+  canGrantRole,
+  resolveUserScope,
+} from "./permission.service";
 import { generateAccessToken, generateRefreshToken } from "./auth.service";
+import { buildInviteDelivery } from "./user.service";
+import { recordAudit } from "./audit.service";
 import { generateOpaqueToken, hashToken, getExpiryDate } from "../utils/token.util";
 import { env } from "../config/env.config";
 import { ApiError } from "../utils/ApiError";
@@ -58,15 +64,7 @@ export async function inviteUser(input: InviteUserInput) {
   const invitingPermissions = await getEffectivePermissions(invitingUser, input.storeId);
 
   // Determine the highest scope level of the inviting user
-  let grantingUserScope: "platform" | "organization" | "store" = "store";
-  if (invitingUser.isSuperAdmin) {
-    grantingUserScope = "platform";
-  } else if (invitingUser.orgRoleId) {
-    const orgRole = await Role.findById(invitingUser.orgRoleId);
-    if (orgRole && orgRole.scope === "organization" && orgRole.isDelete !== true) {
-      grantingUserScope = "organization";
-    }
-  }
+  const grantingUserScope = await resolveUserScope(invitingUser);
 
   // Verify the inviter has sufficient permission to grant targetRole
   const isGrantAllowed = canGrantRole(invitingPermissions, grantingUserScope, targetRole);
@@ -138,15 +136,25 @@ export async function inviteUser(input: InviteUserInput) {
 
   const user = await User.create(userData);
 
-  // 6. Construct the invitation link
-  const inviteLink = `${env.FRONTEND_URL}/accept-invite?token=${token}`;
+  await recordAudit({
+    organizationId: input.organizationId,
+    actorUserId: input.invitedByUserId,
+    action: "user.invited",
+    targetType: "user",
+    targetId: user._id,
+    after: {
+      email: user.email,
+      roleId: targetRole._id.toString(),
+      storeId: input.storeId ?? null,
+    },
+  });
 
   const { passwordHash: _passwordHash, refreshTokens: _refreshTokens, ...userResponse } = user.toObject();
 
+  // 6. Hand back the invitation link, unless production rules forbid returning the token.
   return {
     user: userResponse,
-    inviteToken: token, // Plaintext returned ONLY in API response
-    inviteLink,
+    ...buildInviteDelivery(token),
   };
 }
 

@@ -7,6 +7,7 @@
 
 import mongoose, { Schema, Document } from "mongoose";
 import bcrypt from "bcryptjs";
+import { tenantScopePlugin } from "./plugins/tenantScope.plugin";
 
 export interface IRefreshToken {
   token: string; // SHA-256 hashed refresh token
@@ -220,9 +221,46 @@ userSchema.index(
   }
 );
 
+/**
+ * Supports "list the staff of store X" (GET /users?storeId=...), which matches inside the
+ * storeAccess array. Without it that query collection-scans every user in the organization.
+ */
+userSchema.index({ organizationId: 1, "storeAccess.storeId": 1 });
+
+/**
+ * Supports the last-organization-admin guard, which counts the remaining active users
+ * holding a given organization-scoped role before a demotion or deactivation is allowed.
+ */
+userSchema.index({ organizationId: 1, orgRoleId: 1 });
+
 // ==========================================
 // Pre-validate Hooks
 // ==========================================
+
+/**
+ * One role per (user, store).
+ * getEffectivePermissions resolves a store role with Array.prototype.find, so a duplicate
+ * storeId would make the user's permissions depend on array insertion order — they would be
+ * a cashier or a manager depending on which entry happened to be pushed first.
+ */
+userSchema.pre("validate", function (next) {
+  if (this.storeAccess && this.storeAccess.length > 1) {
+    const seen = new Set<string>();
+    for (const access of this.storeAccess) {
+      const key = access.storeId?.toString();
+      if (!key) continue;
+      if (seen.has(key)) {
+        return next(
+          new Error(
+            "Duplicate store assignment: a user may hold only one role per store."
+          )
+        );
+      }
+      seen.add(key);
+    }
+  }
+  next();
+});
 
 // Ensure exclusivity: super admin must never simultaneously belong to a tenant organization
 userSchema.pre("validate", function (next) {
@@ -309,6 +347,19 @@ userSchema.set("toObject", {
   transform: cleanTransform,
   virtuals: true,
 });
+
+/**
+ * Defense-in-depth tenant isolation.
+ * The schema already defines organizationId and isDelete, so the plugin adds no fields here —
+ * it installs the pre-query hooks that inject the active organization from the request context.
+ * Services still pass organizationId explicitly; this exists so that a query which forgets to
+ * cannot read another organization's user records.
+ *
+ * Safe for the unauthenticated paths: login, refresh, logout, accept-invite and platform auth
+ * all run with no organizationId in the request context, so nothing is wrongly scoped. The
+ * authenticate middleware sets the context only AFTER its own User.findById.
+ */
+userSchema.plugin(tenantScopePlugin, { scope: "organization" });
 
 const User = mongoose.model<IUser, UserModel, IUserMethods>("User", userSchema);
 

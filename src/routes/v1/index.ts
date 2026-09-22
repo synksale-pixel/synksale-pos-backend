@@ -8,7 +8,8 @@ import { ApiResponse } from "../../utils/ApiResponse";
 import platformAuthRouter from "./platformAuth.routes";
 import platformOrganizationRouter from "./platformOrganization.routes";
 import tenantAuthRouter from "./tenantAuth.routes";
-import userInviteRouter from "./userInvite.routes";
+import userRouter from "./user.routes";
+import roleRouter from "./role.routes";
 import storeRouter from "./store.routes";
 
 const v1Router = Router();
@@ -31,7 +32,8 @@ v1Router.get("/health", (_req: Request, res: Response) => {
 v1Router.use("/platform/auth", platformAuthRouter);
 v1Router.use("/platform/organizations", platformOrganizationRouter);
 v1Router.use("/auth", tenantAuthRouter);
-v1Router.use("/users", userInviteRouter);
+v1Router.use("/users", userRouter);
+v1Router.use("/roles", roleRouter);
 v1Router.use("/stores", storeRouter);
 
 export default v1Router;

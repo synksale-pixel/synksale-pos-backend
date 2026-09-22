@@ -13,7 +13,8 @@
     "seed:super-admin": "tsx scripts/seedSuperAdmin.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "sync:system-roles": "tsx scripts/syncSystemRoles.ts"
   },
   "repository": {
     "type": "git",

@@ -6,7 +6,7 @@
 import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/ApiResponse";
-import { ApiError } from "../utils/ApiError";
+import { resolveOrganizationId as resolveOrgId } from "../utils/requestOrganization";
 import {
   createStore,
   listStores,
@@ -15,14 +15,8 @@ import {
   setStoreActive,
 } from "../services/store.service";
 
-/** organizationId is a populated Organization document set by `authenticate`; resolve its `_id`. */
-function resolveOrganizationId(req: Request): string {
-  const orgRef = req.user!.organizationId as unknown as { _id: { toString(): string } } | null;
-  if (!orgRef) {
-    throw new ApiError(400, "Access Denied: You must belong to an organization to manage stores.");
-  }
-  return orgRef._id.toString();
-}
+const resolveOrganizationId = (req: Request): string =>
+  resolveOrgId(req, "manage stores");
 
 export const create = asyncHandler(async (req: Request, res: Response) => {
   const store = await createStore(
