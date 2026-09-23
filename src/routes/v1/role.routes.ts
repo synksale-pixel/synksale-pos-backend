@@ -1,26 +1,77 @@
 /**
- * Purpose: Role Routes (read side).
- * Lets a client resolve role IDs for the invite and staffing endpoints.
+ * Purpose: Role Routes.
+ * Reading the organization's roles, and managing custom ones.
  *
- * GATED ON `user:read`, NOT `user:manage_roles`: anyone who can invite or view staff needs to
- * see the role list, and store managers hold `user:invite` without `user:manage_roles`.
- * Reading your own organization's role names is low-sensitivity; assigning them is not, and
- * that is still gated separately on the endpoints that do the assigning.
+ * READS are gated on `user:read`, not `role:manage`: anyone who can invite or view staff needs
+ * the role list to resolve a roleId, and store managers hold `user:invite` without
+ * `role:manage`. Reading your own organization's role names is low-sensitivity.
+ *
+ * WRITES are gated on `role:manage` AND an organization-level role — defining what permissions
+ * exist in the organization is not a per-store decision.
  */
 
 import { Router } from "express";
-import { authenticate, authorizeAnyScope } from "../../middleware/rbac.middleware";
-import { list, permissions } from "../../controllers/role.controller";
+import { validateRequest } from "../../middleware/validateRequest.middleware";
+import {
+  authenticate,
+  requireOrganizationRole,
+  authorizeAnyScope,
+} from "../../middleware/rbac.middleware";
+import {
+  createRoleSchema,
+  updateRoleSchema,
+} from "../../validators/role.validator";
+import {
+  list,
+  getOne,
+  create,
+  update,
+  remove,
+  permissions,
+} from "../../controllers/role.controller";
 
 const roleRouter = Router();
 
 roleRouter.use(authenticate);
 
+// ---------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------
+
 // authorizeAnyScope, not authorize: a store manager holds `user:read` through their store role,
-// and this route carries no storeId for the store role to be resolved against.
+// and these routes carry no storeId for that store role to be resolved against.
 roleRouter.get("/", authorizeAnyScope("user:read"), list);
 
-// The static permission catalog, for labelling permission keys in a role editor.
+// Static path, registered before /:roleId so it is not swallowed by the param route.
 roleRouter.get("/permissions", authorizeAnyScope("user:read"), permissions);
+
+roleRouter.get("/:roleId", authorizeAnyScope("user:read"), getOne);
+
+// ---------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------
+
+roleRouter.post(
+  "/",
+  requireOrganizationRole,
+  authorizeAnyScope("role:manage"),
+  validateRequest(createRoleSchema),
+  create
+);
+
+roleRouter.patch(
+  "/:roleId",
+  requireOrganizationRole,
+  authorizeAnyScope("role:manage"),
+  validateRequest(updateRoleSchema),
+  update
+);
+
+roleRouter.delete(
+  "/:roleId",
+  requireOrganizationRole,
+  authorizeAnyScope("role:manage"),
+  remove
+);
 
 export default roleRouter;

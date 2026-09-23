@@ -136,6 +136,14 @@ function assertNotSelf(actor: IUser, target: UserDocument, action: string): void
  *
  * MUST run inside the same transaction as the mutation it guards: two concurrent demotions
  * would otherwise each read "one other admin remains", both pass, and orphan the organization.
+ *
+ * REACHABILITY: this currently cannot fire, and that is a property of the permission model
+ * rather than an accident. An administrator is a user holding `user:manage_roles`; canManageUser
+ * requires the actor to hold everything the target holds, so the actor holds it too; and
+ * `user:manage_roles` is minScope "organization", so it can only come from an organization-scoped
+ * role — precisely what the count below looks at. Any actor who gets this far is therefore
+ * counted themselves. Kept deliberately: it is cheap, it is correct, and it is the backstop if
+ * the definition of "administrator" or the ceiling ever changes.
  */
 async function assertNotLastOrganizationAdmin(
   organizationId: string,

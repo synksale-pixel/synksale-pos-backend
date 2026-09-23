@@ -9,6 +9,7 @@ import mongoose, { Schema, Document } from "mongoose";
 import { tenantScopePlugin } from "./plugins/tenantScope.plugin";
 import {
   isValidPermission,
+  permissionFitsScope,
   PermissionKey,
 } from "../config/permissions.catalog";
 
@@ -102,7 +103,34 @@ const roleSchema = new Schema<IRole, RoleModel>(
  * but ensures no duplicates exist within a single organization.
  * For platform roles, organizationId is null, ensuring "platform_admin" slug remains globally unique at the platform scope level.
  */
-roleSchema.index({ organizationId: 1, slug: 1 }, { unique: true });
+/**
+ * Excludes soft-deleted roles so a slug is released when its role is deleted.
+ * Without the partial filter, deleting "Shift Supervisor" would keep `shift_supervisor`
+ * occupied forever and recreating it would fail with a confusing duplicate-key 409.
+ */
+roleSchema.index(
+  { organizationId: 1, slug: 1 },
+  { unique: true, partialFilterExpression: { isDelete: false } }
+);
+
+/**
+ * A role may only hold permissions that are meaningful at its own scope: a store-scoped role
+ * cannot carry an organization-wide permission such as `report:view_org`. Enforced in the
+ * service for a precise error message; repeated here so no code path can bypass it.
+ */
+roleSchema.pre("validate", function (next) {
+  const offending = (this.permissions ?? []).filter(
+    (key) => !permissionFitsScope(this.scope, key)
+  );
+  if (offending.length > 0) {
+    return next(
+      new Error(
+        `Permissions not valid at ${this.scope} scope: ${offending.join(", ")}.`
+      )
+    );
+  }
+  next();
+});
 
 // ==========================================
 // Pre-query Hooks (Soft Delete Filter)

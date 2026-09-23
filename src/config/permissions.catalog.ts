@@ -180,3 +180,39 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
 export function isValidPermission(key: string): key is PermissionKey {
   return PERMISSION_CATALOG.some((definition) => definition.key === key);
 }
+
+/** Looks up a permission's catalog entry. */
+export function getPermissionDefinition(
+  key: string
+): PermissionDefinition | undefined {
+  return PERMISSION_CATALOG.find((definition) => definition.key === key);
+}
+
+/** Scope hierarchy, highest first. Shared by the catalog and the privilege checks. */
+export const SCOPE_RANK: Record<"platform" | "organization" | "store", number> = {
+  platform: 3,
+  organization: 2,
+  store: 1,
+};
+
+/**
+ * True when a permission may live in a role of the given scope.
+ *
+ * `minScope` is the LOWEST scope at which a permission is meaningful, so a role may hold any
+ * permission at or below its own scope. An organization role can hold `sale:create`
+ * (minScope "store") because an org admin does everything; a store role cannot hold
+ * `report:view_org` (minScope "organization") because a single store has no view of the
+ * whole organization.
+ *
+ * Until now `minScope` was decorative — nothing read it except the org_admin seed filter.
+ */
+export function permissionFitsScope(
+  roleScope: "platform" | "organization" | "store",
+  key: string
+): boolean {
+  const definition = getPermissionDefinition(key);
+  if (!definition) {
+    return false;
+  }
+  return SCOPE_RANK[roleScope] >= SCOPE_RANK[definition.minScope];
+}

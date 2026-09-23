@@ -124,7 +124,7 @@ export function generateOpenApiDocument() {
       { name: "Stores", description: "Create and manage an organization's stores (locations)." },
       { name: "User Invites", description: "Invite staff to an organization and accept invitations." },
       { name: "Staff Management", description: "Read the staff roster and manage an existing user's roles, store assignments and access." },
-      { name: "Roles", description: "Read the organization's roles and the permission catalog (needed to resolve a roleId)." },
+      { name: "Roles", description: "Read the organization's roles and the permission catalog (needed to resolve a roleId), and create, rename, edit the permissions of, or delete an organization's custom roles (`role:manage`, organization-scoped role required for writes)." },
     ],
   });
 }
