@@ -306,8 +306,21 @@ export const UserListDataSchema = z
   })
   .openapi("UserListData");
 
+/** A role as returned by the role endpoints, with how many users currently hold it. */
+export const RoleWithUsageSchema = RoleSchema.extend({
+  usageCount: z.number().int().openapi({
+    description:
+      "How many users hold this role, organization-wide or at any store. A role with usageCount > 0 cannot be deleted (409).",
+    example: 3,
+  }),
+}).openapi("RoleWithUsage");
+
+export const RoleDataSchema = z
+  .object({ role: RoleWithUsageSchema })
+  .openapi("RoleData");
+
 export const RoleListDataSchema = z
-  .object({ roles: z.array(RoleSchema) })
+  .object({ roles: z.array(RoleWithUsageSchema) })
   .openapi("RoleListData");
 
 export const PermissionCatalogDataSchema = z
@@ -317,7 +330,11 @@ export const PermissionCatalogDataSchema = z
         key: z.string().openapi({ example: "sale:create" }),
         label: z.string().openapi({ example: "Create Sales" }),
         category: z.string().openapi({ example: "Sales" }),
-        minScope: z.enum(["platform", "organization", "store"]).openapi({ example: "store" }),
+        minScope: z.enum(["platform", "organization", "store"]).openapi({
+          description:
+            "The lowest scope at which this permission is meaningful. A role may only hold permissions at or below its own scope — this is ENFORCED (400) when creating or editing a role, not just advisory: e.g. a store-scoped role cannot hold a permission whose minScope is `organization`.",
+          example: "store",
+        }),
       })
     ),
   })

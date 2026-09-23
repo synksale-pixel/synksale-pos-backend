@@ -1010,17 +1010,32 @@ describe("Store management", () => {
       });
       await grantInviteToManagers();
 
+      // Rejected on SCOPE: an organization-scoped role outranks any store-scoped inviter.
       expect((await invite(inviter.token, body(roleOf("org_admin")._id, String(mine._id)))).status).toBe(403);
       expect((await invite(inviter.token, body(roleOf("accountant")._id, String(mine._id)))).status).toBe(403);
 
+      // Rejected on PERMISSIONS, within the same scope. This needs a reduced inviter: since
+      // store_manager gained user:read and user:invite it now holds every store-level
+      // permission, so no store-scoped role can exceed it. (The role formerly used here held
+      // store:create, which minScope now forbids in a store-scoped role.)
+      const limited = await Role.create({
+        organizationId: orgId,
+        name: "Limited",
+        slug: "limited",
+        scope: "store",
+        permissions: ["sale:create", "user:invite"],
+      });
+      const weakInviter = await createUser(orgId, "weak@acme.test", {
+        storeAccess: [{ storeId: mine._id, roleId: limited._id }],
+      });
       const powerful = await Role.create({
         organizationId: orgId,
         name: "Power",
         slug: "power",
         scope: "store",
-        permissions: ["sale:create", "store:create"],
+        permissions: ["sale:create", "inventory:adjust"],
       });
-      expect((await invite(inviter.token, body(powerful._id, String(mine._id)))).status).toBe(403);
+      expect((await invite(weakInviter.token, body(powerful._id, String(mine._id)))).status).toBe(403);
       expect(await User.findOne({ email: "new@acme.test" })).toBeNull();
     });
 

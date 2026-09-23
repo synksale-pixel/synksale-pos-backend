@@ -572,3 +572,120 @@ It is the remaining blocker before onboarding a real customer.
 - Store managers can invite new staff to their own store but cannot assign an *existing* employee
   to it (`user:manage_roles` is organization-level). Intentional for now — reassignment is a
   cross-store action — but worth revisiting.
+
+---
+
+## 🎭 Role Management (Phase 2)
+
+`GET /roles` shipped read-only in Phase 1, so an organization was stuck with the five roles
+seeded at signup. This adds custom roles: a shop can define "Shift Supervisor" (till and refunds,
+no inventory) without waiting on a code change.
+
+### Endpoints
+
+| Method | Path | Gate |
+|---|---|---|
+| `POST` | `/api/v1/roles` | organization role + `role:manage` |
+| `GET` | `/api/v1/roles/:roleId` | `user:read` (any scope) |
+| `PATCH` | `/api/v1/roles/:roleId` | organization role + `role:manage` |
+| `DELETE` | `/api/v1/roles/:roleId` | organization role + `role:manage` |
+
+Reads stay on `user:read` because anyone who can invite staff needs to resolve a `roleId`, and
+store managers hold `user:invite` without `role:manage`. Writes are organization-level: what
+permissions exist in the organization is not a per-store decision.
+
+`GET /roles` and `GET /roles/:roleId` now return **`usageCount`** — how many users hold the role —
+so a client can warn before a delete that would be refused. It is one grouped aggregation for the
+whole page, not a query per role, and a user holding the same role at several stores counts once.
+
+### The two ceilings
+
+**Creating**: `canGrantRole` — you cannot mint a role whose scope or permissions exceed your own.
+This is what stops role management being an escalation hole.
+
+**Modifying and deleting**: `canModifyRole`, new in this phase. `canGrantRole` inspects only the
+permissions being *set*, so on its own a limited administrator could edit `org_admin` and strip it
+to nothing, or quietly repoint a role other people hold. The actor must dominate the role **as it
+stands today** as well as the state they are moving it to. Same shape as `canManageUser` from
+Phase 0, applied to a role instead of a user.
+
+### What is immutable, and why
+
+- **`slug`** is derived from `name` (`"Shift Supervisor"` → `shift_supervisor`, numeric suffix on
+  collision) and never accepted from a client. It is the key `syncSystemRolePermissions` matches
+  templates on, so a client-chosen slug could collide with a system role's.
+- **`scope`** is fixed at creation. Flipping a store role to organization scope would instantly
+  grant organization-wide powers to everyone already holding it — a silent mass escalation with
+  no record of who gained what.
+- **A built-in role's permissions** cannot be changed (renaming is fine). The reconcile re-adds
+  template permissions additively, so an edit here would be silently undone the next time the
+  catalog grows. Organizations needing a different set create a custom role.
+
+### Deleting
+
+Refused with 409 while any user still holds the role. A soft-deleted role is filtered out by the
+`Role` pre-query hook, so `getEffectivePermissions` resolves it to `null` and its holders silently
+end up with zero permissions at that store — it fails closed, which is right, but it is invisible
+to the administrator and undebuggable for the user. The count runs inside the same transaction as
+the delete so a concurrent assignment cannot slip through.
+
+The delete is soft, so audit entries can still resolve the role's name.
+
+### `minScope` is no longer decorative
+
+It had exactly one consumer since day one — the `org_admin` filter in `roleSeed.service.ts`.
+Now a role may only hold permissions at or below its own scope: an organization role can grant
+`sale:create`, but a store role cannot grant `report:view_org`. Enforced in the service for a
+precise message and repeated as a `pre("validate")` hook on the model so no path bypasses it.
+
+None of the five seeded roles violate it, so no migration was needed — but it **did** catch a
+fixture in `store.test.ts` that built a *store*-scoped role holding `store:create` (minScope
+`organization`). The assertion it supported — that the ceiling rejects an over-privileged role
+within the same scope — is still valid, so the fixture was rewritten with a reduced inviter.
+Which surfaced a side effect of Phase 1 worth knowing:
+
+> **`store_manager` now holds every store-level permission.** After gaining `user:read` and
+> `user:invite`, no store-scoped role can exceed it, so a store manager can assign any store role
+> at their own store — including promoting a cashier to store manager. Reasonable for retail, but
+> it is a real widening, not just a test artifact.
+
+### The unique index kept deleted slugs occupied
+
+`{ organizationId, slug }` was unique with no `isDelete` filter, so deleting "Shift Supervisor"
+would have reserved `shift_supervisor` forever and recreating it would fail with a confusing
+duplicate-key 409. Same bug class as the user-email index noted in Phase 1. Now a partial index
+on `{ isDelete: false }`, and there is a test that deletes a role and recreates it with the same
+name.
+
+### Correction: the last-administrator guard is still unreachable
+
+Phase 1 recorded the 409 guard as defense-in-depth that would "become reachable as soon as custom
+roles can separate `user:manage` from `user:manage_roles`". That was wrong, and this phase proves
+it — the refusal in that scenario is a 403 from the ceiling, never the 409:
+
+- to count as an administrator, the TARGET must hold `user:manage_roles`;
+- `canManageUser` requires the ACTOR to hold everything the target holds, so the actor holds it too;
+- `user:manage_roles` is `minScope: "organization"`, so it can only come from an organization-scoped
+  role — exactly what the admin count looks at.
+
+So any actor who clears the ceiling is themselves a counted administrator and the remaining count
+is never zero. `minScope` enforcement actually tightened this further, by closing the one loophole
+(borrowing the permission from a store role). The guard is kept deliberately — it is cheap, it is
+correct, and it is the backstop if the definition of "administrator" or the ceiling ever changes —
+but it is documented as unreachable rather than pending, and the test asserts the 403 that really
+happens.
+
+### Testing
+
+42 new tests in `tests/integration/roleManagement.test.ts`; 237 pass in total. Covers both
+ceilings, system-role protection, scope/slug immutability, `minScope` rejection in both
+directions, delete-while-in-use and delete-after-reassign, slug collision and reuse-after-delete,
+cross-tenant isolation on every verb, audit entries, and that a permission change takes effect on
+the holder's next request with no re-login.
+
+### Still open
+
+- Email service: production invites remain undeliverable (carried over from Phase 1).
+- No way to bulk-reassign a role's holders. Delete refuses and tells you the count; an optional
+  `replacementRoleId` on the delete request would close it, deferred until someone asks.
+- Deleted roles cannot be restored. Soft delete keeps the row for audit resolution only.

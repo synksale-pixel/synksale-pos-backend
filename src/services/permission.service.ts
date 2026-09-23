@@ -7,6 +7,7 @@
 import mongoose from "mongoose";
 import { IUser } from "../models/user.model";
 import { IRole, Role } from "../models/role.model";
+import { SCOPE_RANK } from "../config/permissions.catalog";
 
 export type PermissionScope = "platform" | "organization" | "store";
 
@@ -148,13 +149,6 @@ export async function resolveUserScope(user: IUser): Promise<PermissionScope> {
   return "store";
 }
 
-// Scope hierarchy ranking for privilege escalation checks
-const SCOPE_RANK = {
-  platform: 3,
-  organization: 2,
-  store: 1,
-};
-
 /**
  * Validates whether a granting user has sufficient permissions and scope hierarchy to assign/create a role.
  * Prevents privilege escalation. E.g., a Store Manager cannot create/assign a role containing organization configuration
@@ -189,6 +183,50 @@ export function canGrantRole(
   );
 
   return hasAllPermissions;
+}
+
+/**
+ * Validates whether an actor may change an existing role.
+ *
+ * WHY canGrantRole IS NOT ENOUGH ON ITS OWN:
+ * canGrantRole inspects only the permissions being SET, so it would happily let a limited
+ * administrator edit a role far above them — stripping org_admin down to nothing, or quietly
+ * repointing a role other people already hold. The actor must therefore dominate the role as it
+ * stands today as well as the state they are moving it to. Same shape as canManageUser, applied
+ * to a role instead of a user.
+ *
+ * @param actorPermissions Effective permissions of the user performing the action.
+ * @param actorScope Highest scope level of the user performing the action.
+ * @param currentRole The role as it exists now.
+ * @param nextPermissions The permission list being written, if it is changing.
+ */
+export function canModifyRole(
+  actorPermissions: string[],
+  actorScope: PermissionScope,
+  currentRole: IRole,
+  nextPermissions?: string[]
+): boolean {
+  if (actorPermissions.includes("*")) {
+    return true;
+  }
+
+  // 1. You must already hold everything the role currently grants.
+  if (!canGrantRole(actorPermissions, actorScope, currentRole)) {
+    return false;
+  }
+
+  // 2. And everything it is about to grant.
+  if (nextPermissions) {
+    const proposed = {
+      ...currentRole,
+      permissions: nextPermissions,
+    } as IRole;
+    if (!canGrantRole(actorPermissions, actorScope, proposed)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
