@@ -217,8 +217,14 @@ export function canModifyRole(
 
   // 2. And everything it is about to grant.
   if (nextPermissions) {
+    // toObject() is required: spreading a hydrated Mongoose document copies only its own
+    // enumerable properties ($__, _doc), NOT the schema paths, which live on the model
+    // prototype. A raw spread produces an object with no `scope`, so canGrantRole's scope
+    // comparison silently reads undefined and ranks it 0.
     const proposed = {
-      ...currentRole,
+      ...(typeof (currentRole as { toObject?: () => IRole }).toObject === "function"
+        ? (currentRole as unknown as { toObject: () => IRole }).toObject()
+        : currentRole),
       permissions: nextPermissions,
     } as IRole;
     if (!canGrantRole(actorPermissions, actorScope, proposed)) {

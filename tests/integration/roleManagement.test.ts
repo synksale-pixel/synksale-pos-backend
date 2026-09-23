@@ -11,7 +11,10 @@ import { User } from "../../src/models/user.model";
 import { Role } from "../../src/models/role.model";
 import { Store } from "../../src/models/store.model";
 import { AuditLog } from "../../src/models/auditLog.model";
-import { seedDefaultRolesForOrganization } from "../../src/services/roleSeed.service";
+import {
+  seedDefaultRolesForOrganization,
+  syncSystemRolePermissions,
+} from "../../src/services/roleSeed.service";
 import { generateAccessToken } from "../../src/services/auth.service";
 import mongoose from "mongoose";
 
@@ -702,6 +705,299 @@ describe("Role management", () => {
       expect(res.status).toBe(200);
       expect(res.body.data.permissions.length).toBeGreaterThan(0);
       expect(res.body.data.permissions[0]).toHaveProperty("minScope");
+    });
+  });
+
+  // =============================================================
+  // resolveUniqueSlug boundaries
+  // =============================================================
+
+  describe("slug derivation boundaries", () => {
+    it("rejects a name that slugifies to nothing, even though it clears the 2-character minimum", async () => {
+      // Zod's min(2) counts raw characters, so "!!" is accepted by the validator; slugifyRoleName
+      // then strips every character that is not a word character, whitespace or hyphen, leaving
+      // an empty string. The 400 in resolveUniqueSlug is meant for exactly this.
+      const res = await request.post(BASE).set(auth(admin.token)).send(newRole({ name: "!!" }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/at least one letter or number/i);
+    });
+
+    it("treats names differing only by case and punctuation as the same slug", async () => {
+      await request
+        .post(BASE)
+        .set(auth(admin.token))
+        .send(newRole({ name: "shift supervisor" }))
+        .expect(201);
+
+      const res = await request
+        .post(BASE)
+        .set(auth(admin.token))
+        .send(newRole({ name: "SHIFT -- Supervisor!!" }));
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.role.slug).toBe("shift_supervisor_2");
+    });
+
+    it("gives up after 20 collisions with a 409 rather than looping forever", async () => {
+      const base = "shift_supervisor";
+      const occupiedSlugs = [base, ...Array.from({ length: 19 }, (_, i) => `${base}_${i + 2}`)];
+      await Role.insertMany(
+        occupiedSlugs.map((slug, i) => ({
+          organizationId: org._id,
+          scope: "store",
+          name: `Occupant ${i}`,
+          slug,
+          permissions: ["sale:create"],
+        }))
+      );
+
+      const res = await request.post(BASE).set(auth(admin.token)).send(newRole());
+
+      expect(res.status).toBe(409);
+      expect(res.body.message).toMatch(/unique slug/i);
+    });
+  });
+
+  // =============================================================
+  // listRoles usageCount vs getRole usageCount (aggregation bypasses tenantScope/soft-delete)
+  // =============================================================
+
+  describe("usageCount consistency", () => {
+    it("excludes a soft-deleted holder from usageCount in BOTH listRoles and getRole", async () => {
+      // getRole's usageCount comes from countRoleHolders, which uses User.countDocuments — a
+      // method the tenantScope plugin hooks, and that hook injects `isDelete: { $ne: true }`
+      // UNCONDITIONALLY (not only when a request context is present). So a soft-deleted holder
+      // is excluded there.
+      //
+      // listRoles' usageCount instead comes from a raw User.aggregate([...]) pipeline, and the
+      // tenantScope plugin does NOT hook aggregate() — its targetMethods list covers
+      // find/findOne/findOneAndUpdate/countDocuments/updateMany/updateOne/deleteOne/deleteMany
+      // only. So listRoles has to write the soft-delete filter into its $match stage by hand.
+      // Without it the two endpoints disagree about whether the same role is "in use".
+      const holder = await createUser(org._id, "ghost@acme.test", {
+        storeAccess: [{ storeId: store._id, roleId: roleOf("cashier")._id }],
+      });
+      await User.updateOne({ _id: holder.user._id }, { $set: { isDelete: true } });
+
+      const listRes = await request.get(BASE).set(auth(admin.token));
+      const cashierFromList = listRes.body.data.roles.find(
+        (r: { slug: string }) => r.slug === "cashier"
+      );
+      const getRes = await request
+        .get(`${BASE}/${roleOf("cashier")._id}`)
+        .set(auth(admin.token));
+
+      expect(getRes.body.data.role.usageCount).toBe(0);
+      expect(cashierFromList.usageCount).toBe(0);
+    });
+  });
+
+  // =============================================================
+  // Deleted-role fallout: fail closed, asserted rather than assumed
+  // =============================================================
+
+  describe("a role deleted out from under its holder", () => {
+    it("resolves to zero permissions from that role on the holder's next request (fails closed)", async () => {
+      const created = await request
+        .post(BASE)
+        .set(auth(admin.token))
+        .send(newRole({ permissions: ["user:read"] }))
+        .expect(201);
+      const roleId = created.body.data.role._id;
+
+      const staff = await createUser(org._id, "staff2@acme.test", {
+        storeAccess: [{ storeId: store._id, roleId }],
+      });
+
+      // Holds user:read only through this role.
+      await request.get("/api/v1/users").set(auth(staff.token)).expect(200);
+
+      // The API itself refuses to delete a role while it is held (see the 409 tests above), so
+      // this simulates the only other ways it can happen: direct DB manipulation, or the
+      // concurrency race demonstrated below.
+      await Role.updateOne({ _id: roleId }, { $set: { isDelete: true } });
+
+      const res = await request.get("/api/v1/users").set(auth(staff.token));
+      expect(res.status).toBe(403);
+    });
+  });
+
+  // =============================================================
+  // syncSystemRolePermissions interaction with custom roles
+  // =============================================================
+
+  describe("syncSystemRolePermissions and custom roles", () => {
+    it("does not touch a custom role even when its slug collides with a system template's base slug", async () => {
+      // "Org Admin" collides with the seeded org_admin system role's slug, so resolveUniqueSlug
+      // suffixes it — it can never actually acquire the bare "org_admin" slug while that system
+      // role exists.
+      const res = await request
+        .post(BASE)
+        .set(auth(admin.token))
+        .send(newRole({ name: "Org Admin", scope: "organization", permissions: ["user:read"] }));
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.role.slug).toBe("org_admin_2");
+
+      await syncSystemRolePermissions(org._id);
+
+      const customRoleAfter = await Role.findById(res.body.data.role._id);
+      expect(customRoleAfter!.isSystemRole).toBe(false);
+      expect(customRoleAfter!.permissions).toEqual(["user:read"]); // untouched by the reconcile
+    });
+
+    it("keeps matching a renamed system role by its immutable slug, not by name", async () => {
+      await request
+        .patch(`${BASE}/${roleOf("cashier")._id}`)
+        .set(auth(admin.token))
+        .send({ name: "Till Operator" })
+        .expect(200);
+
+      // The API refuses to change a system role's permissions at all, so this simulates a
+      // permission the reconcile is meant to restore (e.g. one dropped before role editing
+      // shipped, per unionMissingPermissions' own docstring).
+      await Role.updateOne(
+        { _id: roleOf("cashier")._id },
+        { $set: { permissions: ["sale:create"] } }
+      );
+
+      await syncSystemRolePermissions(org._id);
+
+      const reconciled = await Role.findById(roleOf("cashier")._id);
+      expect(reconciled!.name).toBe("Till Operator"); // rename preserved
+      expect(reconciled!.permissions).toEqual(
+        expect.arrayContaining(["product:read", "report:view_store"])
+      );
+    });
+  });
+
+  // =============================================================
+  // Concurrency: is the transaction actually protecting anything?
+  // =============================================================
+
+  describe("deleteRole concurrency", () => {
+    it("REAL RACE: a concurrent grant slipping in between the holder count and the commit is not prevented by the transaction", async () => {
+      // deleteRole's docstring claims a concurrent assignment "cannot slip in between the check
+      // and the delete" because the count happens inside the transaction. That is only true for
+      // writes that are themselves part of the SAME transaction: MongoDB's snapshot isolation
+      // stops the transaction from being confused by ITS OWN reads, and detects write conflicts
+      // when two transactions touch the SAME document — but grantStoreAccess (POST
+      // /users/:userId/store-access) takes no session at all, writes a DIFFERENT document (the
+      // User, not the Role), and commits immediately and independently. Nothing about the
+      // delete transaction can see, block, or conflict with it.
+      //
+      // This test replicates deleteRole's own read/write sequence by hand so the interleaving
+      // is deterministic instead of racing real wall-clock concurrency.
+      const created = await request.post(BASE).set(auth(admin.token)).send(newRole()).expect(201);
+      const roleId = created.body.data.role._id;
+      const staff = await createUser(org._id, "race@acme.test", {});
+
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        const role = await Role.findOne({ _id: roleId, organizationId: org._id }).session(
+          session
+        );
+        const holders = await User.countDocuments({
+          organizationId: org._id,
+          $or: [{ orgRoleId: role!._id }, { "storeAccess.roleId": role!._id }],
+        }).session(session);
+        expect(holders).toBe(0); // deleteRole's 409 guard would not fire yet either
+
+        // A second administrator grants this very role to a new hire WHILE the delete
+        // transaction above is still open.
+        const grantRes = await request
+          .post(`/api/v1/users/${staff.user._id}/store-access`)
+          .set(auth(admin.token))
+          .send({ storeId: String(store._id), roleId });
+        expect(grantRes.status).toBe(201);
+
+        // The open transaction's snapshot was taken before the grant, so it never sees it, and
+        // proceeds to soft-delete the role exactly as deleteRole would.
+        role!.isDelete = true;
+        await role!.save({ session });
+        await session.commitTransaction();
+      } finally {
+        session.endSession();
+      }
+
+      expect(await Role.findById(roleId)).toBeNull(); // the role is gone...
+      const reloadedStaff = await User.findById(staff.user._id);
+      // ...but the concurrently-granted assignment still references it. Their effective
+      // permissions from it fail closed (see the block above), but the delete's own in-use
+      // guard did not catch this holder, and the dangling assignment is now invisible to
+      // listRoles/getRole (a deleted role is filtered out of both).
+      expect(
+        reloadedStaff!.storeAccess.some((a) => a.roleId.toString() === roleId)
+      ).toBe(true);
+    });
+  });
+
+  // =============================================================
+  // Concurrency: the last-organization-admin guard has the same shape of race
+  // =============================================================
+
+  describe("assertNotLastOrganizationAdmin concurrency", () => {
+    it("REAL RACE: two concurrent demotions of the organization's only two admins can both pass, leaving zero", async () => {
+      // The guard's own comment claims it "MUST run inside the same transaction as the
+      // mutation it guards" to stop two concurrent demotions from each reading "one other admin
+      // remains". Running inside A transaction stops conflicts on documents that transaction
+      // itself writes — it does not stop a DIFFERENT transaction, reading and writing a
+      // DIFFERENT user document, from reaching the same stale conclusion. Replicated here by
+      // hand (two real sessions, real transactions) rather than raced over HTTP, so the
+      // interleaving is deterministic.
+      const admin2 = await createUser(org._id, "admin2@acme.test", {
+        orgRoleId: roleOf("org_admin")._id,
+      });
+
+      const session1 = await mongoose.startSession();
+      const session2 = await mongoose.startSession();
+      session1.startTransaction();
+      session2.startTransaction();
+
+      try {
+        const remaining1 = await User.countDocuments({
+          organizationId: org._id,
+          orgRoleId: roleOf("org_admin")._id,
+          isActive: true,
+          _id: { $ne: admin2.user._id },
+        }).session(session1);
+        const remaining2 = await User.countDocuments({
+          organizationId: org._id,
+          orgRoleId: roleOf("org_admin")._id,
+          isActive: true,
+          _id: { $ne: admin.user._id },
+        }).session(session2);
+
+        expect(remaining1).toBe(1); // admin is still active, from session1's point of view
+        expect(remaining2).toBe(1); // admin2 is still active, from session2's point of view
+
+        await User.updateOne(
+          { _id: admin2.user._id },
+          { $set: { isActive: false } }
+        ).session(session1);
+        await User.updateOne(
+          { _id: admin.user._id },
+          { $set: { isActive: false } }
+        ).session(session2);
+
+        await session1.commitTransaction();
+        await session2.commitTransaction();
+      } finally {
+        session1.endSession();
+        session2.endSession();
+      }
+
+      const [reloadedAdmin, reloadedAdmin2] = await Promise.all([
+        User.findById(admin.user._id),
+        User.findById(admin2.user._id),
+      ]);
+
+      // Both admins are now inactive: the organization has zero active administrators, which
+      // this guard exists specifically to prevent.
+      expect(reloadedAdmin!.isActive).toBe(false);
+      expect(reloadedAdmin2!.isActive).toBe(false);
     });
   });
 });
