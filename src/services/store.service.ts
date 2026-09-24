@@ -11,6 +11,7 @@ import { IUser } from "../models/user.model";
 import { hasOrganizationScopeRole } from "./permission.service";
 import { ApiError } from "../utils/ApiError";
 import { logger } from "../config/logger.config";
+import { getRequestContext, runWithStoreContext } from "../utils/requestContext";
 import type { CreateStoreInput, UpdateStoreInput } from "../validators/store.validator";
 
 export interface ListStoresInput {
@@ -147,4 +148,27 @@ export async function setStoreActive(
     `Store ${isActive ? "activated" : "deactivated"}: ${storeId} org=${organizationId} by user=${actorUserId}`
   );
   return store;
+}
+
+/**
+ * Runs `fn` scoped to another store of the caller's organization — the only sanctioned way for a
+ * store-scoped request to touch a second store (e.g. the destination of an inventory transfer).
+ * Verifies the store exists and is not deleted in the context organization before switching;
+ * whether the caller may act on it (permissions, isActive) is still the calling service's call.
+ */
+export async function runInOrganizationStore<T>(
+  storeId: string,
+  fn: () => T | PromiseLike<T>
+): Promise<T> {
+  const organizationId = getRequestContext()?.organizationId;
+  if (!organizationId) {
+    throw new ApiError(500, "runInOrganizationStore requires an organization context.");
+  }
+  const exists =
+    mongoose.Types.ObjectId.isValid(storeId) &&
+    (await Store.exists({ _id: storeId, organizationId }));
+  if (!exists) {
+    throw new ApiError(404, "Store not found.");
+  }
+  return runWithStoreContext(storeId, fn);
 }

@@ -689,3 +689,76 @@ the holder's next request with no re-login.
 - No way to bulk-reassign a role's holders. Delete refuses and tells you the count; an optional
   `replacementRoleId` on the delete request would close it, deferred until someone asks.
 - Deleted roles cannot be restored. Soft delete keeps the row for audit resolution only.
+
+## 🛡️ Tenant Scope Plugin Hardening
+
+`tenantScopePlugin` is the backstop that stops a forgotten or wrong tenant ID from reaching
+another tenant's data. Before the POS domain (catalog, inventory, sales, reports) lands on it,
+four gaps were closed.
+
+### Operations the plugin never saw
+
+Only eight query methods were hooked. `aggregate` is a separate Mongoose middleware family and
+was not covered at all. `distinct`, `findOneAndDelete` (which also covers `findByIdAndDelete`),
+`findOneAndReplace` and `replaceOne` were missing from the list. The `usageCount` bug fixed in
+`43e7968` came from this gap.
+
+- The missing query methods are now hooked.
+- A `pre("aggregate")` hook puts a `$match` at the front of the pipeline. Aggregates don't cast
+  types, so the IDs are cast to ObjectId first. `$geoNear` takes the filter in its `query`, and
+  `$search`/`$vectorSearch` get it right after their stage. An explicit `isDelete` in the opening
+  `$match` is respected. Joins (`$lookup`, `$unionWith`) are **not** scoped: a join into another
+  tenant collection must scope its own pipeline or join on `_id`.
+- A pipeline `$match`/`$geoNear` that names another organization does **not** throw, unlike a
+  query filter. It is ANDed with the tenant `$match` and returns nothing. Both fail closed, but
+  if a report comes back unexpectedly empty, check for this first.
+- `estimatedDocumentCount` and `bulkWrite` take no scopable filter. They now throw inside a
+  tenant context.
+
+### Explicit IDs were trusted
+
+The plugin only filled `organizationId`/`storeId` when a filter left them out, so a filter naming
+the wrong tenant went through unchecked. A filter may now name only the context's ID (as a plain
+value, `$eq` or `$in`), and anything else throws a 500 `Tenant scope violation` that is logged as
+an error. It's a 500 because only a code bug can cause it. When no store is in the context
+(org-level requests), store filters are left to the service. Both tenant IDs are now
+`immutable`, so an update can't move a document into another tenant. This needed
+`options.immutable` as well as `SchemaType.immutable()`, because update casting reads only the
+option.
+
+### Writes were unchecked
+
+`save`/`create`/`insertMany` (including `lean`) and replacement documents now fill in the
+context's IDs when they're missing, and throw when they differ.
+
+Update bodies needed their own check. With `upsert: true`, Mongoose moves a `$set` on an
+immutable path into `$setOnInsert`, which it deliberately exempts from immutability. So an upsert
+whose filter correctly named org A could still insert the document into org B. The pos-tester
+review found this. The rules for `updateOne`/`updateMany`/`findOneAndUpdate` are now:
+
+- A tenant ID may appear only in `$set`, `$setOnInsert` or a top-level key, and only with the
+  context's value.
+- Any other operator on it throws, including either side of `$rename`.
+- Pipeline-style updates are refused inside a tenant context.
+- On `organization+store` models, an upsert must resolve one store from an equality filter or
+  from the update body. Upserts skip `required`, so an org-level request could otherwise insert a
+  row with no `storeId`.
+
+A read or write that legitimately touches a second store, such as a transfer's destination, goes
+through `runInOrganizationStore(storeId, fn)` in `store.service.ts`. It verifies the store belongs
+to the context organization, then runs `fn` under `runWithStoreContext`. That lower-level helper
+now throws when the context has no organization, because otherwise it would scope nothing.
+Background jobs must set up their organization context first.
+
+### Soft-delete is now opt-out
+
+`softDelete: false` drops the `isDelete` field and filter but keeps tenant scoping. Ledgers
+(sales, stock movements) must use it. The audit log now does, so existing rows keep an unused
+`isDelete: false` and no migration is needed.
+
+### Testing
+
+39 tests in `tests/unit/tenantScopePlugin.test.ts` use two seeded organizations and cover each
+operation above. They include the upsert rules (both the refusals and the allowed own-store upsert
+used for stock levels), `$geoNear`, saving a document with a populated organization, and nested
+store switches. 293 tests pass in total.

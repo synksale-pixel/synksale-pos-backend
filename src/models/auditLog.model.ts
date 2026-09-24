@@ -43,7 +43,6 @@ export interface IAuditLog {
   after?: Record<string, unknown>;
   /** Correlates the entry with the request log (X-Request-Id). */
   requestId?: string;
-  isDelete: boolean;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -89,11 +88,6 @@ const auditLogSchema = new Schema<IAuditLog, AuditLogModel>(
     before: { type: Schema.Types.Mixed },
     after: { type: Schema.Types.Mixed },
     requestId: { type: String },
-    isDelete: {
-      type: Boolean,
-      default: false,
-      index: true,
-    },
   },
   {
     timestamps: true,
@@ -106,7 +100,14 @@ auditLogSchema.index({ organizationId: 1, targetId: 1, createdAt: -1 });
 /** Supports "what did this administrator do, newest first". */
 auditLogSchema.index({ organizationId: 1, actorUserId: 1, createdAt: -1 });
 
-auditLogSchema.plugin(tenantScopePlugin, { scope: "organization" });
+/**
+ * The audit log is an append-only ledger: entries are never deleted, soft or otherwise, so it
+ * opts out of the plugin's soft-delete. Older entries may still carry an unused isDelete: false.
+ */
+auditLogSchema.plugin(tenantScopePlugin, {
+  scope: "organization",
+  softDelete: false,
+});
 
 const AuditLog = mongoose.model<IAuditLog, AuditLogModel>(
   "AuditLog",

@@ -174,9 +174,9 @@ export async function listRoles(
   const roles = await Role.find(filter).sort({ scope: 1, name: 1 });
 
   // One grouped count for the whole page rather than a query per role.
-  // The tenantScopePlugin hooks find/findOne/countDocuments and friends, but NOT aggregate,
-  // so the soft-delete filter has to be written out by hand here. Without it this count would
-  // include soft-deleted users and disagree with getRole, which goes through countDocuments.
+  // The tenantScopePlugin also scopes aggregates, but the organization and soft-delete filters
+  // are kept explicit here: the count must match getRole's countDocuments even when this runs
+  // outside a request context.
   const usage = await User.aggregate<{ _id: mongoose.Types.ObjectId; count: number }>([
     {
       $match: {
