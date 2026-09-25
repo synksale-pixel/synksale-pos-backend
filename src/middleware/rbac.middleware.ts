@@ -236,12 +236,12 @@ export const authorize = (requiredPermission: PermissionKey) => {
         );
       }
 
-      // Retrieve active storeId from context or request parameters
-      const storeId =
-        getRequestContext()?.storeId ||
-        (req.params.storeId as string) ||
-        (req.body.storeId as string) ||
-        (req.query.storeId as string);
+      // Only trust the store that scopeToStore verified and put into the request context.
+      // Never fall back to a caller-supplied storeId: a route that forgot scopeToStore would
+      // then pass this check on the caller's store role while the tenant plugin applies no
+      // store filter, exposing every store in the organization. Without a verified store,
+      // only organization-level permissions apply, so store-scoped staff are rejected.
+      const storeId = getRequestContext()?.storeId;
 
       // Resolve permissions dynamically
       const permissions = await getEffectivePermissions(req.user, storeId);
