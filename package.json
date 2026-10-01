@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "sync:system-roles": "tsx scripts/syncSystemRoles.ts"
+    "sync:system-roles": "tsx scripts/syncSystemRoles.ts",
+    "sync:indexes": "tsx scripts/syncIndexes.ts"
   },
   "repository": {
     "type": "git",

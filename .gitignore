@@ -144,3 +144,6 @@ dist
 # End of https://www.toptal.com/developers/gitignore/api/node
 # Claude Code local files
 .claude/
+
+# Local Requestly/Postman collections used for manual API testing
+docs/requestly/
