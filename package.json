@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "sync:system-roles": "tsx scripts/syncSystemRoles.ts",
-    "sync:indexes": "tsx scripts/syncIndexes.ts"
+    "sync:indexes": "tsx scripts/syncIndexes.ts",
+    "migrate": "npm run sync:indexes -- --apply && npm run sync:system-roles"
   },
   "repository": {
     "type": "git",

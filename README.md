@@ -137,6 +137,23 @@ npm run build
 npm run start
 ```
 
+#### Production Deployment
+Run the database migrations on **every** deploy, after installing dependencies and before starting the new build:
+```bash
+npm ci
+npm run build
+NODE_ENV=production npm run migrate   # must complete successfully before the next step
+npm run start
+```
+
+`npm run migrate` runs two idempotent scripts, both safe to repeat on every deploy:
+- `sync:indexes -- --apply`: makes each collection's MongoDB indexes match the Mongoose schemas. Production runs with `autoIndex` off, so **this is the only thing that creates indexes there**. It also replaces indexes whose options changed, which `autoIndex` never does even in development.
+- `sync:system-roles`: adds any new catalog permissions to the built-in roles of existing organizations.
+
+Neither script modifies business data (`sync:system-roles` only adds permissions to built-in roles). To preview the index changes without applying them, run `NODE_ENV=production npm run sync:indexes`.
+
+> The migration scripts run through `tsx`, a dev dependency. Install with `npm ci` (not `npm ci --omit=dev`) on the machine that runs them.
+
 ### 5. Linting and Formatting
 To keep the codebase compliant with coding styles:
 ```bash
