@@ -762,3 +762,71 @@ Background jobs must set up their organization context first.
 operation above. They include the upsert rules (both the refusals and the allowed own-store upsert
 used for stock levels), `$geoNear`, saving a document with a populated organization, and nested
 store switches. 293 tests pass in total.
+
+---
+
+## 🧱 Catalog & Purchases — Phase 0: Foundations
+
+v1 targets the GCC (the Purchases Specification v2 is written for Bahrain/UAE). This phase lays
+the groundwork that products, stock and purchases need: money, currency, tax rates and coded
+errors. No Zoho integration: the platform builds those features itself.
+
+### Currency and country
+
+- `src/config/currencies.config.ts` lists the supported currencies with their minor-unit
+  decimals (BHD/KWD/OMR = 3, AED/QAR/SAR/INR = 2) and countries. INR stays so organizations
+  created before the switch remain valid.
+- An organization trades in **one currency**. New stores must send `countryCode` (ISO 3166-1),
+  and it must be a country using the organization's currency (`STORE_COUNTRY_CURRENCY_MISMATCH`).
+  Legacy stores without `countryCode` can set it through `PATCH /stores/:storeId`.
+- Signup takes an optional `currency` (default **BHD**, was hard-coded INR) and seeds that
+  country's standard VAT rate as the default tax rate (BH 10%, AE/OM 5%, SA 15%; none for KW/QA).
+
+### Organization settings — `GET` / `PATCH /api/v1/organization`
+
+Any member can read the profile (clients need `currency.decimals` to format money). Updating
+needs `organization:configure` on an org-level role. Updatable: `legalName`,
+`taxRegistrationNumber` (TRN, spaces/hyphens stripped), `settings.currency`, `settings.timezone`,
+`settings.inventory.allowNegativeStock` (default false). A currency change is refused while any
+store is in a country using another currency (`CURRENCY_STORE_MISMATCH`).
+
+> Once priced documents exist (Phase 1+), a currency change must also be refused, since it
+> would reinterpret every stored amount.
+
+### Money — `src/utils/money.ts`
+
+Amounts are stored as integer minor units and sent over the API as decimal strings (`"1.250"`).
+All arithmetic goes through decimal.js; rounding is half-up per line. `parseMoney` rejects more
+decimals than the currency has rather than rounding user input.
+
+### Tax rates — `/api/v1/tax-rates`
+
+A rate is a list of components (`[{ name: "VAT", rate: 10 }]`), so a split tax fits the same
+shape later. `rate` is their exact sum. Names are unique per organization, case-insensitive, and
+reusable after delete. Exactly one default, enforced by a partial unique index; the default can't
+be deactivated or deleted, and an inactive rate can't become default. Reads need only
+authentication (product form and POS need them); writes need the new **`tax:manage`**
+permission (org-level; org_admin and accountant). Document lines will copy the rate they used.
+
+### Coded errors
+
+`ApiError.coded(status, code, message, errors)` adds a stable `code` to the response, and error
+details can carry `field`, `code` and `meta`. Generic translations now carry codes too:
+`VALIDATION_FAILED` (Zod, Mongoose validation) and `DUPLICATE` (E11000). Existing callers are
+unchanged.
+
+### Deploy note
+
+Run `npm run migrate` (indexes + `sync:system-roles`) so existing organizations' org_admin and
+accountant roles receive `tax:manage`.
+
+### Testing
+
+New: `tests/unit/money.test.ts`, `tests/integration/organization.test.ts`,
+`tests/integration/taxRate.test.ts`, and `tests/integration/phase0Hardening.test.ts` from the
+pos-tester review (concurrent default/name races, tenant isolation on every tax-rate action,
+platform-token and RBAC boundaries, signup rollback when tax seeding fails). That review found two
+money bugs, now fixed: `-0` could be returned, and an invalid quantity or rate surfaced as a 500
+instead of a coded 400 (`INVALID_QUANTITY` / `INVALID_RATE`). The plugin test's Organization stand-in is now inserted raw,
+because `store.service` now loads the real Organization model. Manual: Requestly Section 6
+(`docs/requestly/section-6-org-settings-tax-rates.postman_collection.json`). 378 tests pass.

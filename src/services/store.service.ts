@@ -9,6 +9,7 @@ import mongoose from "mongoose";
 import { Store } from "../models/store.model";
 import { IUser } from "../models/user.model";
 import { hasOrganizationScopeRole } from "./permission.service";
+import { assertCountryMatchesCurrency } from "./organization.service";
 import { ApiError } from "../utils/ApiError";
 import { logger } from "../config/logger.config";
 import { getRequestContext, runWithStoreContext } from "../utils/requestContext";
@@ -36,11 +37,14 @@ export async function createStore(
     throw new ApiError(409, `A store with code '${code}' already exists in your organization.`);
   }
 
+  await assertCountryMatchesCurrency(organizationId, input.countryCode);
+
   const store = await Store.create({
     organizationId: new mongoose.Types.ObjectId(organizationId),
     name: input.name,
     code,
     address: input.address,
+    countryCode: input.countryCode,
     timezone: input.timezone,
   });
 
@@ -95,7 +99,7 @@ export async function getStore(organizationId: string, storeId: string) {
 }
 
 /**
- * Updates name, address (partial) and/or timezone. `code` is immutable.
+ * Updates name, address (partial), countryCode and/or timezone. `code` is immutable.
  */
 export async function updateStore(
   organizationId: string,
@@ -106,6 +110,10 @@ export async function updateStore(
   const $set: Record<string, unknown> = {};
   if (input.name !== undefined) $set.name = input.name;
   if (input.timezone !== undefined) $set.timezone = input.timezone;
+  if (input.countryCode !== undefined) {
+    await assertCountryMatchesCurrency(organizationId, input.countryCode);
+    $set.countryCode = input.countryCode;
+  }
   if (input.address) {
     for (const [key, value] of Object.entries(input.address)) {
       if (value !== undefined) $set[`address.${key}`] = value;

@@ -59,7 +59,7 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
     slug: "accountant",
     name: "Accountant",
     scope: "organization",
-    permissions: ["report:view_org", "report:view_store", "sale:refund"],
+    permissions: ["report:view_org", "report:view_store", "sale:refund", "tax:manage"],
   },
   {
     slug: "inventory_clerk",

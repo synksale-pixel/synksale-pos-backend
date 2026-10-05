@@ -11,7 +11,9 @@ export const API = `/api/${env.API_VERSION}`;
 export function errorResponse(
   description: string,
   exampleMessage?: string,
-  statusCode?: number
+  statusCode?: number,
+  code?: string, // optional top-level error `code`; omitted from the example when the error has none
+  errors: unknown[] = []
 ) {
   return {
     description,
@@ -24,8 +26,9 @@ export function errorResponse(
                 success: false,
                 statusCode: statusCode ?? 400,
                 message: exampleMessage,
+                ...(code ? { code } : {}),
                 requestId: "3f1c2b7e-8d54-4c1a-9a6e-2b0f6d1e4a77",
-                errors: [],
+                errors,
               },
             }
           : {}),

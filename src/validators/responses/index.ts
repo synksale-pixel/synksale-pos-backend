@@ -39,13 +39,18 @@ export const ErrorResponseSchema = z
     message: z.string().openapi({
       example: "Request Validation Failed: email: Invalid email format.",
     }),
+    code: z.string().optional().openapi({
+      description:
+        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `ORGANIZATION_NOT_FOUND`. Most older errors (401/403, plain 404/409) carry no code.",
+      example: "TAX_RATE_NAME_TAKEN",
+    }),
     requestId: z.string().uuid().openapi({
       description: "Correlation ID (also sent in the X-Request-Id response header).",
       example: "3f1c2b7e-8d54-4c1a-9a6e-2b0f6d1e4a77",
     }),
     errors: z.array(z.any()).openapi({
       description:
-        "Detail items. For 400 validation errors these are Zod issues ({ code, path, message, ... }); for 409 conflicts it may contain the duplicate key values; often empty.",
+        "Detail items; often empty. Coded domain errors use `{ field?, code?, message?, meta? }` where `meta` carries values for the UI message (e.g. `{ countryCode, organizationCurrency }`). For 400 validation errors these are Zod issues ({ code, path, message, ... }); for E11000 409 conflicts it may contain the duplicate key values.",
       example: [
         { code: "invalid_string", validation: "email", path: ["email"], message: "Invalid email format." },
       ],
@@ -129,6 +134,14 @@ export const OrganizationSchema = z
     slug: z.string().openapi({ example: "sharma-general-store" }),
     contactEmail: z.string().openapi({ example: "contact@sharmastore.in" }),
     contactPhone: z.string().openapi({ example: "+91 98765 43210" }),
+    legalName: z.string().nullable().optional().openapi({
+      description: "Registered legal name printed on documents. null/absent when not set.",
+      example: "Al Noor Trading W.L.L.",
+    }),
+    taxRegistrationNumber: z.string().nullable().optional().openapi({
+      description: "VAT Tax Registration Number (TRN). null/absent when the business is not VAT-registered.",
+      example: "220000123400002",
+    }),
     applicantEmail: z.string().optional().openapi({
       description: "Admin email that submitted the application.",
       example: "rohan@sharmastore.in",
@@ -142,13 +155,98 @@ export const OrganizationSchema = z
     rejectedAt: isoDate("2026-04-21T08:00:00.000Z").nullable(),
     rejectionReason: z.string().nullable().openapi({ example: null as unknown as string }),
     settings: z.object({
-      currency: z.string().openapi({ example: "INR" }),
-      timezone: z.string().openapi({ example: "UTC" }),
+      currency: z.string().openapi({
+        description: "ISO 4217 code: BHD (default), KWD, OMR, AED, QAR, SAR or INR.",
+        example: "BHD",
+      }),
+      timezone: z.string().openapi({ example: "Asia/Bahrain" }),
+      inventory: z
+        .object({
+          allowNegativeStock: z.boolean().openapi({
+            description: "Whether sales/adjustments may take stock below zero.",
+            example: false,
+          }),
+        })
+        .optional()
+        .openapi({ description: "May be absent on organizations created before this setting existed." }),
     }),
     createdAt: isoDate("2026-04-20T10:00:00.000Z"),
     updatedAt: isoDate("2026-04-21T08:00:00.000Z"),
   })
   .openapi("Organization");
+
+/** Tenant-side organization profile (GET/PATCH /organization), shaped by toProfile(). */
+export const OrganizationProfileSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3300"),
+    name: z.string().openapi({ example: "Al Noor Trading" }),
+    slug: z.string().openapi({ example: "al-noor-trading" }),
+    legalName: z.string().nullable().openapi({ example: "Al Noor Trading W.L.L." }),
+    taxRegistrationNumber: z.string().nullable().openapi({ example: "220000123400002" }),
+    contactEmail: z.string().openapi({ example: "contact@alnoor.bh" }),
+    contactPhone: z.string().openapi({ example: "+973 1700 0000" }),
+    settings: z.object({
+      currency: z.string().openapi({ example: "BHD" }),
+      timezone: z.string().openapi({ example: "Asia/Bahrain" }),
+      inventory: z.object({
+        allowNegativeStock: z.boolean().openapi({ example: false }),
+      }),
+    }),
+    currency: z
+      .object({
+        code: z.string().openapi({ example: "BHD" }),
+        name: z.string().openapi({ example: "Bahraini Dinar" }),
+        decimals: z.number().int().openapi({
+          description: "Minor-unit digits for formatting money (BHD/KWD/OMR 3, others 2).",
+          example: 3,
+        }),
+      })
+      .openapi({ description: "Details of settings.currency, for formatting money." }),
+    country: z
+      .object({
+        code: z.string().openapi({ example: "BH" }),
+        name: z.string().openapi({ example: "Bahrain" }),
+      })
+      .nullable()
+      .openapi({ description: "The country that uses the organization's currency." }),
+  })
+  .openapi("OrganizationProfile");
+
+export const OrganizationProfileDataSchema = z
+  .object({ organization: OrganizationProfileSchema })
+  .openapi("OrganizationProfileData");
+
+export const TaxComponentSchema = z
+  .object({
+    name: z.string().openapi({ example: "VAT" }),
+    rate: z.number().openapi({ description: "Percentage, 0-100, max 4 decimals.", example: 10 }),
+  })
+  .openapi("TaxComponent");
+
+export const TaxRateSchema = z
+  .object({
+    _id: objectId("665f1c2e8a4b3c0012ab3600"),
+    id: objectId("665f1c2e8a4b3c0012ab3600"),
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    name: z.string().openapi({ description: "Unique per organization, case-insensitive.", example: "VAT 10%" }),
+    components: z.array(TaxComponentSchema),
+    rate: z.number().openapi({ description: "Exact sum of the component rates (percent).", example: 10 }),
+    isDefault: z.boolean().openapi({
+      description: "The rate pre-selected for new products. At most one per organization.",
+      example: true,
+    }),
+    isActive: z.boolean().openapi({ example: true }),
+    isDelete: z.boolean().openapi({ description: "Soft-delete flag; deleted rates are never returned.", example: false }),
+    createdAt: isoDate("2026-05-01T09:30:00.000Z"),
+    updatedAt: isoDate("2026-05-01T09:30:00.000Z"),
+  })
+  .openapi("TaxRate");
+
+export const TaxRateDataSchema = z.object({ taxRate: TaxRateSchema }).openapi("TaxRateData");
+
+export const TaxRateListDataSchema = z
+  .object({ taxRates: z.array(TaxRateSchema) })
+  .openapi("TaxRateListData");
 
 export const RoleSchema = z
   .object({
@@ -263,7 +361,7 @@ export const StoreSchema = z
     id: objectId("665f1c2e8a4b3c0012ab34ef"),
     organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
     name: z.string().openapi({ example: "Sharma Store - Indiranagar" }),
-    code: z.string().openapi({ description: "Unique within the organization, uppercase.", example: "BLR-001" }),
+    code: z.string().openapi({ description: "Unique within the organization, uppercase.", example: "MNM-001" }),
     address: z.object({
       line1: z.string().openapi({ example: "12, 100 Feet Road" }),
       line2: z.string().optional().openapi({ example: "Indiranagar" }),
@@ -271,6 +369,11 @@ export const StoreSchema = z
       state: z.string().openapi({ example: "Karnataka" }),
       country: z.string().openapi({ example: "India" }),
       postalCode: z.string().openapi({ example: "560038" }),
+    }),
+    countryCode: z.string().optional().openapi({
+      description:
+        "ISO 3166-1 alpha-2 country (BH, KW, OM, AE, QA, SA, IN). Absent only on stores created before this field existed.",
+      example: "IN",
     }),
     timezone: z.string().openapi({ example: "Asia/Kolkata" }),
     isActive: z.boolean().openapi({ example: true }),

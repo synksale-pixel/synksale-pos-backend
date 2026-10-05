@@ -8,5 +8,7 @@ import "./userInvite.openapi";
 import "./user.openapi";
 import "./role.openapi";
 import "./store.openapi";
+import "./organization.openapi";
+import "./taxRate.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";

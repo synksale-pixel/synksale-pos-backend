@@ -57,9 +57,32 @@ registry.registerPath({
   tags,
   summary: "Create a store",
   description:
-    "Requires a **tenant** bearer token and the **`store:create`** permission (organization-scoped roles such as org_admin). The store is always created in the caller's organization. `code` is unique per organization, stored uppercase and cannot be changed later.",
+    "Requires a **tenant** bearer token and the **`store:create`** permission (organization-scoped roles such as org_admin). The store is always created in the caller's organization. `code` is unique per organization, stored uppercase and cannot be changed later. `countryCode` is REQUIRED and must be a country that uses the organization's currency (e.g. `BH` for a BHD organization, `AE` for AED), otherwise the request fails with 400 `STORE_COUNTRY_CURRENCY_MISMATCH`.",
   security,
-  request: { body: { required: true, content: json(createStoreSchema) } },
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: createStoreSchema,
+          example: {
+            name: "Al Noor - Manama Central",
+            code: "MNM-001",
+            address: {
+              line1: "Building 12, Road 3801",
+              line2: "Block 338, Al Mutanabi Avenue",
+              city: "Manama",
+              state: "Capital Governorate",
+              country: "Bahrain",
+              postalCode: "338",
+            },
+            countryCode: "BH",
+            timezone: "Asia/Bahrain",
+          },
+        },
+      },
+    },
+  },
   responses: {
     201: {
       description: "Store created.",
@@ -68,15 +91,23 @@ registry.registerPath({
       ),
     },
     400: errorResponse(
-      "Validation failed (e.g. invalid timezone or code format).",
-      "Request Validation Failed: timezone: Invalid timezone. Use an IANA timezone such as 'Asia/Kolkata'.",
-      400
+      "Validation failed (e.g. missing/unknown `countryCode`, invalid timezone or code format; code `VALIDATION_FAILED`), OR the country does not use the organization's currency (code `STORE_COUNTRY_CURRENCY_MISMATCH`, `errors[0] = { field: \"countryCode\", code, meta: { countryCode, organizationCurrency } }`).",
+      "Stores of this organization must be in a country that uses BHD.",
+      400,
+      "STORE_COUNTRY_CURRENCY_MISMATCH",
+      [
+        {
+          field: "countryCode",
+          code: "STORE_COUNTRY_CURRENCY_MISMATCH",
+          meta: { countryCode: "IN", organizationCurrency: "BHD" },
+        },
+      ]
     ),
     401: TENANT_AUTH_401,
     403: storeAccess403("store:create"),
     409: errorResponse(
       "A store with this code already exists in your organization.",
-      "A store with code 'BLR-001' already exists in your organization.",
+      "A store with code 'MNM-001' already exists in your organization.",
       409
     ),
     500: server500,
@@ -143,7 +174,7 @@ registry.registerPath({
   path: `${base}/{storeId}`,
   tags,
   summary: "Update a store",
-  description: `${managePathNote}\n\nRequires **\`store:configure\`**. Send any of \`name\`, \`address\` (any subset of fields) or \`timezone\`. \`code\` is immutable: sending it (or any unknown field) returns 400.`,
+  description: `${managePathNote}\n\nRequires **\`store:configure\`**. Updatable fields: \`name\`, \`address\` (any subset of fields), \`countryCode\` and \`timezone\`; send at least one. \`countryCode\` (optional here) must be a country that uses the organization's currency, otherwise 400 \`STORE_COUNTRY_CURRENCY_MISMATCH\`. \`code\` is immutable: sending it (or any unknown field) returns 400.`,
   security,
   request: {
     params: storeIdParam,
@@ -154,7 +185,19 @@ registry.registerPath({
       description: "Store updated.",
       content: json(successEnvelope("UpdateStoreResponse", StoreDataSchema, "Store updated successfully.")),
     },
-    400: badStoreId400,
+    400: errorResponse(
+      "Validation failed, malformed storeId, OR `countryCode` does not use the organization's currency (code `STORE_COUNTRY_CURRENCY_MISMATCH`, `errors[0] = { field: \"countryCode\", code, meta: { countryCode, organizationCurrency } }`).",
+      "Stores of this organization must be in a country that uses BHD.",
+      400,
+      "STORE_COUNTRY_CURRENCY_MISMATCH",
+      [
+        {
+          field: "countryCode",
+          code: "STORE_COUNTRY_CURRENCY_MISMATCH",
+          meta: { countryCode: "IN", organizationCurrency: "BHD" },
+        },
+      ]
+    ),
     401: TENANT_AUTH_401,
     403: storeAccess403("store:configure"),
     404: notFound404,

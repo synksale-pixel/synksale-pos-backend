@@ -90,7 +90,9 @@ beforeEach(async () => {
     { organizationId: orgA, storeId: storeA2, name: "a2", qty: 2 },
     { organizationId: orgB, storeId: storeB1, name: "b1", qty: 3 },
   ]);
-  await OrgRefModel.create({ _id: orgA, name: "Org A" });
+  // Raw insert: works whether OrgRefModel is the stand-in or the real Organization model
+  // (loaded when an imported service depends on it), whose validators need far more fields.
+  await OrgRefModel.collection.insertOne({ _id: orgA, name: "Org A" });
   await GeoItem.init(); // ensure the 2dsphere index exists before $geoNear runs
   await GeoItem.create([
     {

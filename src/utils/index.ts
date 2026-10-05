@@ -1,5 +1,5 @@
 export { asyncHandler, AsyncRequestHandler } from "./asyncHandler";
-export { ApiError } from "./ApiError";
+export { ApiError, ApiErrorDetail } from "./ApiError";
 export { ApiResponse } from "./ApiResponse";
 export {
   getRequestContext,
