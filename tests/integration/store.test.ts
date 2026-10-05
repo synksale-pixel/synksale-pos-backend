@@ -28,6 +28,7 @@ const validStore = {
     country: "India",
     postalCode: "560001",
   },
+  countryCode: "IN",
   timezone: "Asia/Kolkata",
 };
 

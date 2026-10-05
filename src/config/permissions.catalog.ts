@@ -29,7 +29,9 @@ export type PermissionKey =
   | "role:manage"
   | "store:create"
   | "store:configure"
-  | "organization:configure";
+  | "organization:configure"
+  // Tax
+  | "tax:manage";
 
 export interface PermissionDefinition {
   key: PermissionKey;
@@ -170,6 +172,15 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     key: "organization:configure",
     label: "Modify Organization Configuration",
     category: "Admin",
+    minScope: "organization",
+  },
+
+  // ===== Tax =====
+  {
+    // Tax rates are shared by sales and purchases, so they are not a purchase setting.
+    key: "tax:manage",
+    label: "Manage Tax Rates",
+    category: "Tax",
     minScope: "organization",
   },
 ];

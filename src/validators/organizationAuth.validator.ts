@@ -6,6 +6,7 @@
 import "../config/openapi.registry"; // must load first: enables .openapi() on Zod
 import { z } from "zod";
 import { PASSWORD_MIN_LENGTH } from "./platformAuth.validator";
+import { CURRENCY_CODES, DEFAULT_CURRENCY } from "../config/currencies.config";
 
 export const signupSchema = z.object({
   organizationName: z
@@ -35,6 +36,16 @@ export const signupSchema = z.object({
       description:
         "7-20 characters: digits, spaces, hyphens, parentheses, optional leading +.",
       example: "+91 98765 43210",
+    }),
+  currency: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .pipe(z.enum(CURRENCY_CODES, { message: `currency must be one of: ${CURRENCY_CODES.join(", ")}.` }))
+    .optional()
+    .openapi({
+      description: `ISO 4217 currency the organization trades in. Defaults to ${DEFAULT_CURRENCY}. The country's standard VAT rate is seeded as the default tax rate.`,
+      example: "BHD",
     }),
   adminFirstName: z
     .string()

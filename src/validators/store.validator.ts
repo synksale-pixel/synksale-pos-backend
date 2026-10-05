@@ -5,6 +5,7 @@
 
 import "../config/openapi.registry"; // must load first: enables .openapi() on Zod
 import { z } from "zod";
+import { COUNTRY_CODES } from "../config/currencies.config";
 
 const isValidTimezone = (value: string): boolean => {
   try {
@@ -20,7 +21,7 @@ const nameField = z
   .trim()
   .min(1, { message: "Store name is required." })
   .max(100, { message: "Store name must be at most 100 characters long." })
-  .openapi({ description: "Display name of the store.", example: "Sharma Store - Indiranagar" });
+  .openapi({ description: "Display name of the store.", example: "Al Noor - Seef Mall" });
 
 const codeField = z
   .string()
@@ -33,14 +34,14 @@ const codeField = z
   .openapi({
     description:
       "Short code, unique within your organization. Stored uppercase. Cannot be changed after creation.",
-    example: "BLR-001",
+    example: "MNM-001",
   });
 
-const timezoneField = z
+export const timezoneField = z
   .string()
   .trim()
   .refine(isValidTimezone, { message: "Invalid timezone. Use an IANA timezone such as 'Asia/Kolkata'." })
-  .openapi({ description: "IANA timezone of the store.", example: "Asia/Kolkata" });
+  .openapi({ description: "IANA timezone of the store.", example: "Asia/Bahrain" });
 
 const requiredText = (label: string, max: number, example: string) =>
   z
@@ -51,23 +52,35 @@ const requiredText = (label: string, max: number, example: string) =>
     .openapi({ example });
 
 const addressShape = {
-  line1: requiredText("Address line 1", 200, "12, 100 Feet Road"),
+  line1: requiredText("Address line 1", 200, "Building 2102, Road 2825"),
   line2: z
     .string()
     .trim()
     .max(200, { message: "Address line 2 must be at most 200 characters long." })
     .optional()
-    .openapi({ example: "Indiranagar" }),
-  city: requiredText("City", 100, "Bengaluru"),
-  state: requiredText("State", 100, "Karnataka"),
-  country: requiredText("Country", 100, "India"),
-  postalCode: requiredText("Postal code", 20, "560038"),
+    .openapi({ example: "Block 428" }),
+  city: requiredText("City", 100, "Manama"),
+  state: requiredText("State", 100, "Capital Governorate"),
+  country: requiredText("Country", 100, "Bahrain"),
+  postalCode: requiredText("Postal code", 20, "428"),
 };
+
+const countryCodeField = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .pipe(z.enum(COUNTRY_CODES, { message: `countryCode must be one of: ${COUNTRY_CODES.join(", ")}.` }))
+  .openapi({
+    description:
+      "ISO 3166-1 alpha-2 country of the store. Must use the organization's currency (e.g. BH for a BHD organization).",
+    example: "BH",
+  });
 
 export const createStoreSchema = z.object({
   name: nameField,
   code: codeField,
   address: z.object(addressShape),
+  countryCode: countryCodeField,
   timezone: timezoneField,
 });
 
@@ -77,11 +90,14 @@ export const updateStoreSchema = z
     address: z.object(addressShape).partial().optional().openapi({
       description: "Any subset of address fields; omitted fields are left unchanged.",
     }),
+    countryCode: countryCodeField.optional(),
     timezone: timezoneField.optional(),
   })
-  .strict({ message: "Unknown or immutable field. Only name, address and timezone can be updated." })
+  .strict({
+    message: "Unknown or immutable field. Only name, address, countryCode and timezone can be updated.",
+  })
   .refine((body) => Object.keys(body).length > 0, {
-    message: "At least one field (name, address, timezone) must be provided.",
+    message: "At least one field (name, address, countryCode, timezone) must be provided.",
   });
 
 export type CreateStoreInput = z.infer<typeof createStoreSchema>;

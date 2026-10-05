@@ -7,6 +7,7 @@
 
 import mongoose, { Schema, Document } from "mongoose";
 import { tenantScopePlugin } from "./plugins/tenantScope.plugin";
+import { COUNTRY_CODES } from "../config/currencies.config";
 
 export interface IStore {
   organizationId: mongoose.Types.ObjectId;
@@ -20,6 +21,11 @@ export interface IStore {
     country: string;
     postalCode: string;
   };
+  /**
+   * ISO 3166-1 alpha-2 country. Must use the organization's currency (checked in the service).
+   * Optional only for stores created before it existed; new stores must set it.
+   */
+  countryCode?: string;
   timezone: string;
   isActive: boolean;
   isDelete: boolean;
@@ -78,6 +84,12 @@ const storeSchema = new Schema<IStore, StoreModel>(
         required: [true, "Postal code is required"],
         trim: true,
       },
+    },
+    countryCode: {
+      type: String,
+      enum: COUNTRY_CODES,
+      uppercase: true,
+      trim: true,
     },
     timezone: {
       type: String,

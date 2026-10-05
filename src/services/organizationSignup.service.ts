@@ -10,12 +10,15 @@ import { Organization } from "../models/organization.model";
 import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { seedDefaultRolesForOrganization } from "./roleSeed.service";
+import { seedDefaultTaxRates } from "./taxRate.service";
+import { DEFAULT_CURRENCY } from "../config/currencies.config";
 import { ApiError } from "../utils/ApiError";
 
 export interface SignupOrganizationInput {
   organizationName: string;
   contactEmail?: string;
   contactPhone: string;
+  currency?: string;
   adminFirstName: string;
   adminLastName: string;
   adminEmail: string;
@@ -88,6 +91,7 @@ async function signupOrganizationOnce(input: SignupOrganizationInput) {
 
     // 2. Create the Organization document
     // We default settings.timezone to 'UTC' since timezone is required by the schema.
+    const currency = input.currency ?? DEFAULT_CURRENCY;
     const [organization] = await Organization.create(
       [
         {
@@ -98,7 +102,7 @@ async function signupOrganizationOnce(input: SignupOrganizationInput) {
           contactEmail: (input.contactEmail || input.adminEmail).toLowerCase().trim(),
           contactPhone: input.contactPhone.trim(),
           settings: {
-            currency: "INR",
+            currency,
             timezone: "UTC",
           },
         },
@@ -108,6 +112,9 @@ async function signupOrganizationOnce(input: SignupOrganizationInput) {
 
     // 3. Seed default roles for this new organization
     await seedDefaultRolesForOrganization(organization._id, { session });
+
+    // 3b. Seed the country's standard VAT rate as the default tax rate (none for KW/QA)
+    await seedDefaultTaxRates(organization._id, currency, { session });
 
     // 4. Fetch the org_admin role we just seeded to assign to the first user
     const adminRole = await Role.findOne({

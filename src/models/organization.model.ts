@@ -6,6 +6,7 @@
  */
 
 import mongoose, { Schema, Document } from "mongoose";
+import { CURRENCY_CODES, DEFAULT_CURRENCY } from "../config/currencies.config";
 
 export interface IOrganization {
   name: string;
@@ -21,9 +22,18 @@ export interface IOrganization {
   rejectedBy: mongoose.Types.ObjectId | null;
   rejectedAt: Date | null;
   rejectionReason: string | null;
+  /** Registered legal name printed on documents; falls back to `name` when null. */
+  legalName: string | null;
+  /** VAT Tax Registration Number (TRN). Null when the business is not VAT-registered. */
+  taxRegistrationNumber: string | null;
   settings: {
+    /** ISO 4217 code. Fixed per organization: every store must be in a country that uses it. */
     currency: string;
     timezone: string;
+    inventory: {
+      /** When false (default), a sale or adjustment can never take stock below zero. */
+      allowNegativeStock: boolean;
+    };
   };
   createdAt?: Date;
   updatedAt?: Date;
@@ -115,14 +125,32 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
       type: String,
       default: null,
     },
+    legalName: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    taxRegistrationNumber: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
     settings: {
       currency: {
         type: String,
-        default: "INR", // Can be customized per organization
+        enum: CURRENCY_CODES,
+        default: DEFAULT_CURRENCY,
       },
       timezone: {
         type: String,
         required: [true, "Default timezone is required"],
+      },
+      inventory: {
+        allowNegativeStock: {
+          type: Boolean,
+          default: false,
+        },
       },
     },
   },

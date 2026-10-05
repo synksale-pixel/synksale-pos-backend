@@ -33,7 +33,7 @@ registry.registerPath({
   tags,
   summary: "Submit an organization application (public)",
   description:
-    "Public. Creates a new organization in `pending` state together with its first admin user (role `org_admin`). **No tokens are returned**: the organization cannot log in until a Super Admin approves it (see `/platform/organizations/{id}/approve`). Keep `data.organization.slug`: it is the `orgSlug` needed at login. Runs atomically in a DB transaction.",
+    "Public. Creates a new organization in `pending` state together with its first admin user (role `org_admin`). **No tokens are returned**: the organization cannot log in until a Super Admin approves it (see `/platform/organizations/{id}/approve`). Keep `data.organization.slug`: it is the `orgSlug` needed at login. Runs atomically in a DB transaction. Optional `currency` (BHD default; one of BHD, KWD, OMR, AED, QAR, SAR, INR) fixes the currency the organization trades in; every store must later be in a country using it. The standard VAT rate of that currency's country is seeded as the organization's default tax rate (BH 10%, AE/OM 5%, SA 15%; none for KW, QA, IN - create them via `POST /tax-rates`).",
   request: { body: { required: true, content: json(signupSchema) } },
   responses: {
     201: {

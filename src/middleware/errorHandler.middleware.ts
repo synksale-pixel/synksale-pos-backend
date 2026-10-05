@@ -108,6 +108,7 @@ export const globalErrorHandler = (
         issues,
         err.stack
       );
+      error.code = "VALIDATION_FAILED";
     } else if (err.name === "CastError") {
       // Translates Mongoose ObjectId casting failures
       const castErr = err as unknown as { path: string; value: unknown };
@@ -129,6 +130,7 @@ export const globalErrorHandler = (
         [duplicateErr.keyValue],
         err.stack
       );
+      error.code = "DUPLICATE";
     } else if (
       err.name === "ZodError" ||
       (err as { issues?: unknown[] }).issues
@@ -147,6 +149,7 @@ export const globalErrorHandler = (
         issues,
         err.stack
       );
+      error.code = "VALIDATION_FAILED";
     } else if (err.name === "JsonWebTokenError") {
       // Translates JWT signature validation failures
       error = new ApiError(
@@ -212,6 +215,7 @@ export const globalErrorHandler = (
     success: error.success,
     statusCode: error.statusCode,
     message: error.message,
+    ...(error.code && { code: error.code }),
     requestId,
     errors: error.errors,
     ...(env.NODE_ENV === "development" && { stack: error.stack }),

@@ -11,6 +11,8 @@ import tenantAuthRouter from "./tenantAuth.routes";
 import userRouter from "./user.routes";
 import roleRouter from "./role.routes";
 import storeRouter from "./store.routes";
+import organizationRouter from "./organization.routes";
+import taxRateRouter from "./taxRate.routes";
 
 const v1Router = Router();
 
@@ -35,5 +37,7 @@ v1Router.use("/auth", tenantAuthRouter);
 v1Router.use("/users", userRouter);
 v1Router.use("/roles", roleRouter);
 v1Router.use("/stores", storeRouter);
+v1Router.use("/organization", organizationRouter);
+v1Router.use("/tax-rates", taxRateRouter);
 
 export default v1Router;
