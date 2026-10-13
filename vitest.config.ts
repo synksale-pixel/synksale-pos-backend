@@ -14,6 +14,10 @@ export default defineConfig({
     // so Vitest's 5s default is too tight.
     testTimeout: 15000,
     hookTimeout: 60000, // first-run mongod binary download/startup happens in hooks
+    // Every test file starts its own in-memory replica set (tests/setup.ts). With one worker per
+    // core, a dozen mongod processes start at once and some time out waiting for a primary
+    // ("WaitForPrimaryTimeoutError"), failing whole files. Four at a time is reliable.
+    maxWorkers: 4,
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.ts"],
     exclude: ["node_modules", "dist"],

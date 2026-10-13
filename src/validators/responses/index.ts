@@ -41,7 +41,7 @@ export const ErrorResponseSchema = z
     }),
     code: z.string().optional().openapi({
       description:
-        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `ORGANIZATION_NOT_FOUND`. Most older errors (401/403, plain 404/409) carry no code.",
+        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `PRODUCT_IN_USE`, `VARIANT_IN_USE`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`. Most older errors (401/403, plain 404/409) carry no code.",
       example: "TAX_RATE_NAME_TAKEN",
     }),
     requestId: z.string().uuid().openapi({
@@ -169,6 +169,15 @@ export const OrganizationSchema = z
         })
         .optional()
         .openapi({ description: "May be absent on organizations created before this setting existed." }),
+      sales: z
+        .object({
+          pricesIncludeTax: z.boolean().openapi({
+            description: "Whether selling prices are entered VAT-inclusive.",
+            example: true,
+          }),
+        })
+        .optional()
+        .openapi({ description: "May be absent on organizations created before this setting existed (treated as true)." }),
     }),
     createdAt: isoDate("2026-04-20T10:00:00.000Z"),
     updatedAt: isoDate("2026-04-21T08:00:00.000Z"),
@@ -190,6 +199,12 @@ export const OrganizationProfileSchema = z
       timezone: z.string().openapi({ example: "Asia/Bahrain" }),
       inventory: z.object({
         allowNegativeStock: z.boolean().openapi({ example: false }),
+      }),
+      sales: z.object({
+        pricesIncludeTax: z.boolean().openapi({
+          description: "Selling prices are VAT-inclusive (default true). Cost prices are always VAT-exclusive.",
+          example: true,
+        }),
       }),
     }),
     currency: z
@@ -455,3 +470,158 @@ export const HealthInfraSchema = z
 export const HealthApiDataSchema = z
   .object({ timestamp: isoDate("2026-05-01T09:30:00.000Z") })
   .openapi("ApiHealthData");
+
+// ---------- Catalog (Phase 1) ----------
+
+export const CategorySchema = z
+  .object({
+    _id: objectId("665f1c2e8a4b3c0012ab3700"),
+    id: objectId("665f1c2e8a4b3c0012ab3700"),
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    name: z.string().openapi({ example: "Beverages" }),
+    sortOrder: z.number().int().openapi({ example: 10 }),
+    productCount: z.number().int().openapi({
+      description: "Non-deleted products in this category.",
+      example: 24,
+    }),
+    createdAt: isoDate("2026-10-13T09:00:00.000Z"),
+    updatedAt: isoDate("2026-10-13T09:00:00.000Z"),
+  })
+  .openapi("Category");
+
+export const CategoryDataSchema = z.object({ category: CategorySchema }).openapi("CategoryData");
+
+export const CategoryListDataSchema = z
+  .object({ categories: z.array(CategorySchema) })
+  .openapi("CategoryListData");
+
+const money = (example: string | null, description?: string) =>
+  z.string().openapi({
+    description: description ?? "Decimal string at the organization's currency decimals.",
+    example: example as string,
+  });
+
+export const ProductBarcodesSchema = z
+  .object({
+    upc: z.string().nullable().openapi({ example: null as unknown as string }),
+    ean: z.string().nullable().openapi({ example: "6291041500213" }),
+    isbn: z.string().nullable().openapi({ example: null as unknown as string }),
+    mpn: z.string().nullable().openapi({ example: null as unknown as string }),
+  })
+  .openapi("ProductBarcodes");
+
+export const ProductVariantSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3801"),
+    attributeValues: z.record(z.string()).openapi({
+      description: "Empty object on the default variant of a single item.",
+      example: { Size: "M", Colour: "Red" },
+    }),
+    name: z.string().openapi({
+      description: "Display name: the product name plus attribute values (e.g. 'Crew-neck T-shirt - M / Red').",
+      example: "Crew-neck T-shirt - M / Red",
+    }),
+    sku: z.string().nullable().openapi({ example: "TSHIRT-RED-M" }),
+    barcodes: ProductBarcodesSchema,
+    sellingPrice: money("4.500", "VAT-inclusive when the organization's pricesIncludeTax is true."),
+    costPrice: money("2.750", "VAT-exclusive.").nullable(),
+    reorderPoint: z.number().nullable().openapi({ example: 10 }),
+    isDefault: z.boolean().openapi({
+      description: "true only for the single hidden variant of a single item.",
+      example: false,
+    }),
+    isActive: z.boolean().openapi({ example: true }),
+  })
+  .openapi("ProductVariant");
+
+const productCore = {
+  _id: objectId("665f1c2e8a4b3c0012ab3800"),
+  id: objectId("665f1c2e8a4b3c0012ab3800"),
+  name: z.string().openapi({ example: "Crew-neck T-shirt" }),
+  type: z.enum(["goods", "service"]).openapi({ example: "goods" }),
+  itemType: z.enum(["single", "variant"]).openapi({ example: "variant" }),
+  category: z
+    .object({ id: objectId("665f1c2e8a4b3c0012ab3700"), name: z.string().openapi({ example: "Apparel" }) })
+    .nullable(),
+  unit: z.string().openapi({ example: "pcs" }),
+  imageUrl: z.string().nullable().openapi({ example: "https://cdn.example.com/tshirt.jpg" }),
+  taxPreference: z.enum(["standard", "zero_rated", "exempt", "out_of_scope"]).openapi({ example: "standard" }),
+  isActive: z.boolean().openapi({ example: true }),
+  priceRange: z
+    .object({ min: money("4.500"), max: money("5.000") })
+    .nullable()
+    .openapi({ description: "Lowest and highest selling price across active variants; null when none is active." }),
+};
+
+/** List rows: enough for a product grid; fetch the product for variants and details. */
+export const ProductSummarySchema = z
+  .object({
+    ...productCore,
+    sku: z.string().nullable().openapi({ description: "Single items only (null for variant items).", example: null as unknown as string }),
+    variantCount: z.number().int().openapi({ description: "Active variants.", example: 6 }),
+    updatedAt: isoDate("2026-10-13T09:00:00.000Z"),
+  })
+  .openapi("ProductSummary");
+
+export const ProductSchema = z
+  .object({
+    ...productCore,
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    brand: z.string().nullable().openapi({ example: "Al Noor" }),
+    manufacturer: z.string().nullable().openapi({ example: "Al Noor Garments" }),
+    taxRate: z
+      .object({
+        id: objectId("665f1c2e8a4b3c0012ab3600"),
+        name: z.string().openapi({ example: "VAT 10%" }),
+        rate: z.number().openapi({ example: 10 }),
+      })
+      .nullable()
+      .openapi({ description: "The rate applied (null unless taxPreference is standard)." }),
+    dimensions: z
+      .object({
+        length: z.number(),
+        width: z.number(),
+        height: z.number(),
+        unit: z.enum(["cm", "in"]),
+      })
+      .nullable(),
+    weight: z.object({ value: z.number(), unit: z.enum(["kg", "lb"]) }).nullable(),
+    reportingTags: z.array(z.string()).openapi({ example: [] }),
+    sales: z.object({ description: z.string().nullable() }),
+    purchase: z.object({
+      description: z.string().nullable(),
+      preferredVendorName: z.string().nullable().openapi({ example: "Gulf Textiles W.L.L." }),
+    }),
+    inventory: z.object({
+      trackInventory: z.boolean().openapi({ example: true }),
+      returnable: z.boolean().openapi({ example: true }),
+      valuationMethod: z.literal("weighted_average"),
+    }),
+    attributes: z
+      .array(z.object({ name: z.string(), options: z.array(z.string()) }))
+      .openapi({ description: "Empty for single items.", example: [{ name: "Size", options: ["S", "M", "L"] }] }),
+    variants: z.array(ProductVariantSchema).openapi({
+      description:
+        "Always at least one. A single item has exactly one variant with isDefault: true; use its id wherever a variantId is needed (stock, purchase and sale lines).",
+    }),
+    createdAt: isoDate("2026-10-13T09:00:00.000Z"),
+    updatedAt: isoDate("2026-10-13T09:00:00.000Z"),
+  })
+  .openapi("Product");
+
+export const ProductDataSchema = z.object({ product: ProductSchema }).openapi("ProductData");
+
+export const ProductListDataSchema = z
+  .object({
+    products: z.array(ProductSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("ProductListData");
+
+export const ProductLookupDataSchema = z
+  .object({
+    product: ProductSchema,
+    variantId: objectId("665f1c2e8a4b3c0012ab3801", "The variant whose SKU or barcode matched."),
+    matchedOn: z.enum(["sku", "upc", "ean", "isbn"]).openapi({ example: "ean" }),
+  })
+  .openapi("ProductLookupData");

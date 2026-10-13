@@ -13,7 +13,7 @@ registry.registerPath({
   tags,
   summary: "Get my organization",
   description:
-    "Requires a **tenant** bearer token; no specific permission (any authenticated member). Returns the caller's own organization profile, including `currency` (code, name and `decimals`, the number of minor-unit digits to use when formatting money: BHD/KWD/OMR 3, others 2) and the `country` that uses it. Clients should read this once after login to format money.",
+    "Requires a **tenant** bearer token; no specific permission (any authenticated member). Returns the caller's own organization profile, including `currency` (code, name and `decimals`, the number of minor-unit digits to use when formatting money: BHD/KWD/OMR 3, others 2) and the `country` that uses it. Clients should read this once after login to format money. `settings.sales.pricesIncludeTax` says whether selling prices are entered and shown VAT-inclusive (default true); cost prices are always VAT-exclusive.",
   security,
   responses: {
     200: {
@@ -45,7 +45,7 @@ registry.registerPath({
   description: [
     "Requires a **tenant** bearer token, an **organization-scoped role** (e.g. org_admin; store-scoped staff get 403 even if their role has the permission) and the **`organization:configure`** permission.",
     "",
-    "Send at least one of `legalName`, `taxRegistrationNumber`, `settings`. Unknown fields are rejected (400). `legalName` and `taxRegistrationNumber` accept `null` to clear them. `taxRegistrationNumber` has spaces and hyphens removed and is uppercased, then must be 5-20 letters/digits. `settings` may contain `currency`, `timezone` (IANA) and `inventory.allowNegativeStock`.",
+    "Send at least one of `legalName`, `taxRegistrationNumber`, `settings`. Unknown fields are rejected (400). `legalName` and `taxRegistrationNumber` accept `null` to clear them. `taxRegistrationNumber` has spaces and hyphens removed and is uppercased, then must be 5-20 letters/digits. `settings` may contain `currency`, `timezone` (IANA), `inventory.allowNegativeStock` and `sales.pricesIncludeTax` (boolean: whether selling prices are VAT-inclusive; default true).",
     "",
     "Changing `settings.currency` is refused with 409 `CURRENCY_STORE_MISMATCH` while any store is in a country that uses a different currency; `errors` lists every blocking store as `{ field: \"settings.currency\", code, meta: { storeId, storeCode, countryCode } }`. Move or fix those stores first.",
   ].join("\n"),

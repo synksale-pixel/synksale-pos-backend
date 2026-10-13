@@ -34,6 +34,10 @@ export interface IOrganization {
       /** When false (default), a sale or adjustment can never take stock below zero. */
       allowNegativeStock: boolean;
     };
+    sales: {
+      /** When true (default), selling prices are entered VAT-inclusive and VAT is backed out. */
+      pricesIncludeTax: boolean;
+    };
   };
   createdAt?: Date;
   updatedAt?: Date;
@@ -150,6 +154,12 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
         allowNegativeStock: {
           type: Boolean,
           default: false,
+        },
+      },
+      sales: {
+        pricesIncludeTax: {
+          type: Boolean,
+          default: true,
         },
       },
     },
