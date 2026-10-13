@@ -830,3 +830,44 @@ money bugs, now fixed: `-0` could be returned, and an invalid quantity or rate s
 instead of a coded 400 (`INVALID_QUANTITY` / `INVALID_RATE`). The plugin test's Organization stand-in is now inserted raw,
 because `store.service` now loads the real Organization model. Manual: Requestly Section 6
 (`docs/requestly/section-6-org-settings-tax-rates.postman_collection.json`). 378 tests pass.
+
+---
+
+## 📦 Catalog — Phase 1 contract (validators + Swagger, no endpoints yet)
+
+The product/category API is defined first, for the frontend developer to sign off, before any
+model or service is written. `/categories` and `/products` are documented in Swagger with a
+"contract preview" note and return 404 until they are implemented.
+
+Decisions (approved 2026-10-13):
+
+- **Product + ProductVariant.** Every product has at least one variant; a single item has one
+  hidden `isDefault` variant. Stock, purchase and sale lines will always reference `variantId`.
+  Tax, category, unit and type live on the product; SKU, barcodes, prices and reorder point on
+  the variant.
+- **Request shape follows the frontend form** (`sales` / `purchase` / `inventory` groups). Single
+  items send SKU, barcodes, prices and reorder point at the top level; variant items send
+  `attributes` + `variants`.
+- **Money as decimal strings**; selling prices VAT-inclusive when the new org setting
+  `settings.sales.pricesIncludeTax` is true (default, live now); cost prices VAT-exclusive.
+- `taxPreference`: standard / zero_rated / exempt / out_of_scope (GCC VAT). `type` and `itemType`
+  are immutable. SKU optional and unique per org; UPC/EAN/ISBN unique and scannable; MPN is
+  reference only. Flat categories with `sortOrder`. Images are URLs only.
+- **No opening stock in Phase 1.** It arrives with the stock ledger (Phase 2) as `opening`
+  movements, so there is never a second source of truth for stock.
+- Units live in `src/config/units.config.ts`; kg, g, L, mL, m and cm allow up to 3 decimals.
+
+The pos-tester review found and fixed: a crash on an attribute named `constructor` (prototype
+lookup), a book's identical EAN/ISBN being flagged as a duplicate, services accepting a reorder
+point, update accepting a tax rate on a non-standard product or duplicate attributes, and empty
+nested updates counting as changes.
+
+Checks the services must do (the schema can't see the stored product): re-check reorder points
+when the unit changes, refuse service-only violations arriving via PATCH, check an added variant's
+reorder point against the unit, and coerce `page`/`limit` query strings.
+
+### Test runner
+
+Each test file starts its own in-memory replica set; a dozen at once timed out waiting for a
+primary and failed whole files intermittently. `vitest.config.ts` now caps `maxWorkers` at 4,
+which is reliable (~50 s). 470 tests pass.

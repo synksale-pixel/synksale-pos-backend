@@ -50,8 +50,18 @@ export const updateOrganizationSchema = z
           })
           .strict()
           .optional(),
+        sales: z
+          .object({
+            pricesIncludeTax: z.boolean().optional().openapi({
+              description:
+                "Selling prices are entered VAT-inclusive (true, the default and the norm for GCC shelf prices) or VAT-exclusive. Cost prices are always VAT-exclusive.",
+              example: true,
+            }),
+          })
+          .strict()
+          .optional(),
       })
-      .strict({ message: "Unknown settings field. Only currency, timezone and inventory can be updated." })
+      .strict({ message: "Unknown settings field. Only currency, timezone, inventory and sales can be updated." })
       .optional(),
   })
   .strict({ message: "Unknown field. Only legalName, taxRegistrationNumber and settings can be updated." })

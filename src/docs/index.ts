@@ -10,5 +10,7 @@ import "./role.openapi";
 import "./store.openapi";
 import "./organization.openapi";
 import "./taxRate.openapi";
+import "./category.openapi";
+import "./product.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";

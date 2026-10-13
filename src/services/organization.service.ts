@@ -40,6 +40,9 @@ function toProfile(organization: OrganizationDocument) {
       inventory: {
         allowNegativeStock: organization.settings.inventory?.allowNegativeStock ?? false,
       },
+      sales: {
+        pricesIncludeTax: organization.settings.sales?.pricesIncludeTax ?? true,
+      },
     },
     currency,
     country: country ? { code: country.code, name: country.name } : null,
@@ -102,6 +105,9 @@ export async function updateOrganization(
   if (settings?.timezone !== undefined) $set["settings.timezone"] = settings.timezone;
   if (settings?.inventory?.allowNegativeStock !== undefined) {
     $set["settings.inventory.allowNegativeStock"] = settings.inventory.allowNegativeStock;
+  }
+  if (settings?.sales?.pricesIncludeTax !== undefined) {
+    $set["settings.sales.pricesIncludeTax"] = settings.sales.pricesIncludeTax;
   }
   if (settings?.currency !== undefined && settings.currency !== organization.settings.currency) {
     const allowedCountries = Object.values(COUNTRIES)
