@@ -9,6 +9,7 @@
 
 import { Organization, OrganizationDocument } from "../models/organization.model";
 import { Store } from "../models/store.model";
+import { Product } from "../models/product.model";
 import { ApiError } from "../utils/ApiError";
 import { logger } from "../config/logger.config";
 import { COUNTRIES, getCountryForCurrency, getCurrency } from "../config/currencies.config";
@@ -83,10 +84,8 @@ export async function assertCountryMatchesCurrency(organizationId: string, count
 
 /**
  * Updates legal name, TRN and settings. Changing the currency is refused while any store sits
- * in a country that uses a different one.
- *
- * NOTE: once priced documents exist (products in Phase 1 onwards), changing the currency would
- * reinterpret every stored amount, so it must also be refused then.
+ * in a country that uses a different one, and once any product exists: prices are stored in the
+ * currency's minor units, so a change would reinterpret every stored amount.
  */
 export async function updateOrganization(
   organizationId: string,
@@ -110,6 +109,14 @@ export async function updateOrganization(
     $set["settings.sales.pricesIncludeTax"] = settings.sales.pricesIncludeTax;
   }
   if (settings?.currency !== undefined && settings.currency !== organization.settings.currency) {
+    if (await Product.exists({ organizationId })) {
+      throw ApiError.coded(
+        409,
+        "CURRENCY_LOCKED",
+        "The currency cannot be changed once products exist: their prices are recorded in the current currency.",
+        [{ field: "settings.currency", code: "CURRENCY_LOCKED" }]
+      );
+    }
     const allowedCountries = Object.values(COUNTRIES)
       .filter((country) => country.currency === settings.currency)
       .map((country) => country.code);

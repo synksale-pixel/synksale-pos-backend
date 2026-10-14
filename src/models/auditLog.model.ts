@@ -4,7 +4,8 @@
  *
  * SCOPE (deliberately narrow):
  * Only privileged administrative actions are recorded — role assignments, store access grants,
- * account activation/deactivation, invite revocation, store lifecycle and organization approval.
+ * account activation/deactivation, invite revocation, store lifecycle, organization approval and
+ * catalog price changes.
  * Reads are not audited, and sales will not be either: a sale is its own ledger.
  */
 
@@ -28,6 +29,7 @@ export const AUDIT_ACTIONS = [
   "store.updated",
   "store.activated",
   "store.deactivated",
+  "product.price_changed",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -36,7 +38,7 @@ export interface IAuditLog {
   organizationId: mongoose.Types.ObjectId;
   actorUserId: mongoose.Types.ObjectId;
   action: AuditAction;
-  targetType: "user" | "store" | "role" | "organization";
+  targetType: "user" | "store" | "role" | "organization" | "product";
   targetId: mongoose.Types.ObjectId;
   /** Minimal before/after snapshot of only the fields the action changed. */
   before?: Record<string, unknown>;
@@ -77,7 +79,7 @@ const auditLogSchema = new Schema<IAuditLog, AuditLogModel>(
     },
     targetType: {
       type: String,
-      enum: ["user", "store", "role", "organization"],
+      enum: ["user", "store", "role", "organization", "product"],
       required: true,
     },
     targetId: {

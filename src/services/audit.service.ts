@@ -18,7 +18,7 @@ export interface RecordAuditInput {
   organizationId: mongoose.Types.ObjectId | string;
   actorUserId: mongoose.Types.ObjectId | string;
   action: AuditAction;
-  targetType: "user" | "store" | "role" | "organization";
+  targetType: "user" | "store" | "role" | "organization" | "product";
   targetId: mongoose.Types.ObjectId | string;
   before?: Record<string, unknown>;
   after?: Record<string, unknown>;

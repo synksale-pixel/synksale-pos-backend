@@ -28,8 +28,22 @@ import { User } from "../src/models/user.model";
 import { Role } from "../src/models/role.model";
 import { Store } from "../src/models/store.model";
 import { AuditLog } from "../src/models/auditLog.model";
+import { TaxRate } from "../src/models/taxRate.model";
+import { Category } from "../src/models/category.model";
+import { Product } from "../src/models/product.model";
+import { ProductVariant } from "../src/models/productVariant.model";
 
-const MODELS: mongoose.Model<any>[] = [Organization, User, Role, Store, AuditLog]; // eslint-disable-line @typescript-eslint/no-explicit-any
+const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
+  Organization,
+  User,
+  Role,
+  Store,
+  AuditLog,
+  TaxRate,
+  Category,
+  Product,
+  ProductVariant,
+];
 
 async function run() {
   const apply = process.argv.slice(2).includes("--apply");

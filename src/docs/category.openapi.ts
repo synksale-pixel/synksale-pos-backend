@@ -12,9 +12,6 @@ const security = [{ tenantBearerAuth: [] }];
 const tags = ["Categories"];
 const base = `${API}/categories`;
 
-export const CATALOG_PREVIEW_NOTE =
-  "> **Contract preview (Phase 1).** This endpoint is documented for review and is not implemented yet: calling it returns 404 until it ships.";
-
 const categoryIdParam = z.object({
   categoryId: z.string().openapi({
     description: "Category ID (24-char hex ObjectId). A malformed ID returns 400.",
@@ -22,15 +19,16 @@ const categoryIdParam = z.object({
   }),
 });
 
-const readNote = `${CATALOG_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role), so cashiers can browse categories. Categories are organization-wide.`;
+const readNote = `Requires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role), so cashiers can browse categories. Categories are organization-wide.`;
 const writeNote = (permission: string) =>
-  `${CATALOG_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token, an **organization-scoped role** and **\`${permission}\`** (categories share the product permissions).`;
+  `Requires a **tenant** bearer token, an **organization-scoped role** and **\`${permission}\`** (categories share the product permissions).`;
 
 const notFound404 = errorResponse(
-  "Category does not exist in your organization (other organizations' and deleted categories look the same). Code `CATEGORY_NOT_FOUND`.",
+  "Category does not exist in your organization (other organizations' and deleted categories look the same). Code `CATEGORY_NOT_FOUND`. (A `categoryId` that does not exist inside a product request body is a 400, not a 404.)",
   "Category not found.",
   404,
-  "CATEGORY_NOT_FOUND"
+  "CATEGORY_NOT_FOUND",
+  [{ field: "categoryId", code: "CATEGORY_NOT_FOUND" }]
 );
 const write403 = errorResponse(
   "Not an organization-scoped role, or missing the product permission.",

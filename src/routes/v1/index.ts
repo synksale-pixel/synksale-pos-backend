@@ -13,6 +13,8 @@ import roleRouter from "./role.routes";
 import storeRouter from "./store.routes";
 import organizationRouter from "./organization.routes";
 import taxRateRouter from "./taxRate.routes";
+import categoryRouter from "./category.routes";
+import productRouter from "./product.routes";
 
 const v1Router = Router();
 
@@ -39,5 +41,7 @@ v1Router.use("/roles", roleRouter);
 v1Router.use("/stores", storeRouter);
 v1Router.use("/organization", organizationRouter);
 v1Router.use("/tax-rates", taxRateRouter);
+v1Router.use("/categories", categoryRouter);
+v1Router.use("/products", productRouter);
 
 export default v1Router;
