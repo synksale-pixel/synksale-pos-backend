@@ -871,3 +871,55 @@ reorder point against the unit, and coerce `page`/`limit` query strings.
 Each test file starts its own in-memory replica set; a dozen at once timed out waiting for a
 primary and failed whole files intermittently. `vitest.config.ts` now caps `maxWorkers` at 4,
 which is reliable (~50 s). 470 tests pass.
+
+---
+
+## 📦 Catalog — Phase 1 implementation
+
+`/categories` and `/products` are live behind the contract above; the "contract preview" notes
+are gone from Swagger.
+
+- **Models.** `Category`, `Product`, `ProductVariant`, all organization-scoped with soft delete.
+  Uniqueness lives in partial unique indexes over non-deleted rows: category name and SKU per
+  organization (case-insensitive), every UPC/EAN/ISBN per organization across all three kinds
+  (a multikey `scanCodes` index), one attribute combination per product, one default variant per
+  product. The SKU and barcode indexes filter on `$type: "string"` so variants without them never
+  collide. Money is stored as integer minor units (`sellingPriceMinor`, `costPriceMinor`).
+- **Services.** SKU/barcode conflicts are checked up front so the 409 names the product that has
+  the value; the indexes stay the final word under races. Rules the model hooks apply on `save()`
+  only (services never track inventory, no tax rate unless standard-rated) are applied by the
+  service before every write. Price changes are audited (`product.price_changed`).
+- **Reads** need `product:read` held anywhere (`authorizeAnyScope`), so cashiers can search and
+  scan; writes need an organization-level role and the matching `product:*` permission.
+- **Guards added to Phase 0 services:** the organization currency is locked once any product
+  exists (409 `CURRENCY_LOCKED`), and a tax rate any product uses cannot be deleted
+  (409 `TAX_RATE_IN_USE`).
+- **`syncIndexes` now covers `TaxRate`** (it was missing, so production never got its unique
+  indexes) and the three catalog models. Run `npm run migrate` on deploy.
+
+Bug found while testing: product writes built their documents before the transaction, and on a
+transient-error retry `session.withTransaction` re-ran the callback with documents already marked
+saved, so the retry tried to *update* a product the aborted attempt never committed
+(`DocumentNotFoundError`, seen once under full-suite load). The service now uses
+`connection.transaction()`, which resets document state between attempts; a test forces the
+retry with a spied `save()`. The existing services load their documents inside the transaction
+and are unaffected.
+
+Reviews before commit:
+
+- **pos-tester** added `catalogEdgeCases.test.ts` (28 tests: concurrent SKU/barcode/combination
+  races give 409 never 500, EAN/ISBN cross-kind conflicts, operator-shaped and array query
+  params, ReDoS-style searches, role edge cases, soft-deleted parents, audit contents and audit
+  failure, guard ordering). No source bugs found.
+- **swagger-docs** audit: each product write endpoint now documents only the error codes it can
+  actually return (the shared 400 block listed codes some endpoints never throw), 409 examples
+  show the real `errors[].field` paths, `PRODUCT_IN_USE` / `VARIANT_IN_USE` are marked reserved,
+  and search/lookup/list-parsing behaviour is spelled out. Open question it raised: list `search`
+  does not strip hyphens while `/products/lookup` does.
+
+Test runner: `tests/setup.ts` now retries a failed in-memory replica-set start (3 attempts). The
+start runs at module load, outside `hookTimeout`, and an occasional `WaitForPrimaryTimeoutError`
+on a busy machine failed four whole files once during this work.
+
+Manual: Requestly Section 7 (`docs/requestly/section-7-catalog.postman_collection.json`), replayed
+against the app on the in-memory database before handing over. 579 tests pass.

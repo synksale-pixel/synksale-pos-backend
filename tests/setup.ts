@@ -8,9 +8,36 @@ import mongoose from "mongoose";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { afterAll, afterEach, beforeAll } from "vitest";
 
+/**
+ * Starts the replica set, retrying a failed start. With several test files starting a mongod at
+ * once on a busy machine, one occasionally times out waiting for a primary
+ * ("WaitForPrimaryTimeoutError") and the whole file fails before any test runs. This runs at
+ * module load, outside any hook, so hookTimeout does not cover it; a failed attempt's processes
+ * are stopped before the next one so they don't add to the load.
+ */
+async function startReplSet(attempts = 3): Promise<MongoMemoryReplSet> {
+  for (let attempt = 1; ; attempt++) {
+    const replSet = new MongoMemoryReplSet({ replSet: { count: 1 } });
+    try {
+      await replSet.start();
+      await replSet.waitUntilRunning();
+      return replSet;
+    } catch (error) {
+      await replSet.stop({ doCleanup: true, force: true }).catch(() => undefined);
+      if (attempt >= attempts) throw error;
+      console.warn(
+        `In-memory MongoDB failed to start (attempt ${attempt}/${attempts}): ${
+          error instanceof Error ? error.message : String(error)
+        }. Retrying.`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    }
+  }
+}
+
 // An in-memory MongoDB means tests never touch (or pollute) a real dev/test
 // database, and they run with zero external DB setup.
-const mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+const mongod = await startReplSet();
 
 // IMPORTANT: src/config/env.config.ts validates process.env at import time and
 // dotenv never overrides variables that already exist. Setting MONGO_URI here,

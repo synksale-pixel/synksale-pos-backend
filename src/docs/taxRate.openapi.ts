@@ -229,7 +229,7 @@ registry.registerPath({
   path: `${base}/{taxRateId}`,
   tags,
   summary: "Delete a tax rate",
-  description: `${writeNote()}\n\nSoft delete: the rate disappears from every endpoint and its name can be reused. Responds 200 with \`data: null\`. The default rate cannot be deleted.`,
+  description: `${writeNote()}\n\nSoft delete: the rate disappears from every endpoint and its name can be reused. Responds 200 with \`data: null\`. The default rate cannot be deleted, nor can a rate that any non-deleted product uses (\`TAX_RATE_IN_USE\`; deactivate it instead, which keeps it on existing products but stops it being chosen for new ones). The default-rate check comes first.`,
   security,
   request: { params: taxRateIdParam },
   responses: {
@@ -242,7 +242,11 @@ registry.registerPath({
     403: write403,
     404: notFound404,
     409: errorResponse(
-      "The rate is the organization's default (code `TAX_RATE_IS_DEFAULT`); make another rate the default first.",
+      [
+        "Conflict. Codes:",
+        "- `TAX_RATE_IS_DEFAULT`: the rate is the organization's default; make another rate the default first.",
+        "- `TAX_RATE_IN_USE`: products use this rate (`errors[0].meta.productCount`); deactivate it instead, or move the products to another rate.",
+      ].join("\n"),
       "The default tax rate cannot be deleted. Make another rate the default first.",
       409,
       "TAX_RATE_IS_DEFAULT"

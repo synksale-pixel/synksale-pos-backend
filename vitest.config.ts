@@ -16,7 +16,8 @@ export default defineConfig({
     hookTimeout: 60000, // first-run mongod binary download/startup happens in hooks
     // Every test file starts its own in-memory replica set (tests/setup.ts). With one worker per
     // core, a dozen mongod processes start at once and some time out waiting for a primary
-    // ("WaitForPrimaryTimeoutError"), failing whole files. Four at a time is reliable.
+    // ("WaitForPrimaryTimeoutError"), failing whole files. Four at a time is reliable, and
+    // tests/setup.ts retries a failed start for the rare case a busy machine still hits it.
     maxWorkers: 4,
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.ts"],

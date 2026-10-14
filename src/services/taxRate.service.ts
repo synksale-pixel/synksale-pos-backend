@@ -8,6 +8,7 @@
 
 import mongoose from "mongoose";
 import { TaxRate } from "../models/taxRate.model";
+import { Product } from "../models/product.model";
 import { ApiError } from "../utils/ApiError";
 import { logger } from "../config/logger.config";
 import { getCountryForCurrency } from "../config/currencies.config";
@@ -228,9 +229,8 @@ export async function setTaxRateActive(
 }
 
 /**
- * Soft-deletes a rate. The default rate cannot be deleted.
- * NOTE: once products reference tax rates (Phase 1), deleting a rate in use must be refused;
- * deactivate it instead.
+ * Soft-deletes a rate. The default rate, and a rate any product still uses, cannot be deleted;
+ * a rate in use can be deactivated instead.
  */
 export async function deleteTaxRate(organizationId: string, taxRateId: string, actorUserId: string) {
   const taxRate = await findTaxRateOrThrow(organizationId, taxRateId);
@@ -239,6 +239,16 @@ export async function deleteTaxRate(organizationId: string, taxRateId: string, a
       409,
       "TAX_RATE_IS_DEFAULT",
       "The default tax rate cannot be deleted. Make another rate the default first."
+    );
+  }
+
+  const productCount = await Product.countDocuments({ organizationId, taxRateId: taxRate._id });
+  if (productCount > 0) {
+    throw ApiError.coded(
+      409,
+      "TAX_RATE_IN_USE",
+      `This tax rate is used by ${productCount} product${productCount === 1 ? "" : "s"}. Deactivate it instead, or move those products to another rate first.`,
+      [{ code: "TAX_RATE_IN_USE", meta: { productCount } }]
     );
   }
 
