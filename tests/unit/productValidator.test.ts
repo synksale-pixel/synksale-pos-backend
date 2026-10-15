@@ -240,11 +240,15 @@ describe("updates", () => {
 });
 
 describe("categories", () => {
-  it("validates name and sortOrder and rejects unknown fields", () => {
+  it("validates name, sortOrder and parentId and rejects unknown fields", () => {
     expect(createCategorySchema.safeParse({ name: "Beverages", sortOrder: 10 }).success).toBe(true);
     expect(createCategorySchema.safeParse({ name: " " }).success).toBe(false);
     expect(createCategorySchema.safeParse({ name: "X", sortOrder: 1.5 }).success).toBe(false);
-    expect(createCategorySchema.safeParse({ name: "X", parentId: "665f1c2e8a4b3c0012ab3700" }).success).toBe(false);
+    expect(createCategorySchema.safeParse({ name: "X", parentId: "665f1c2e8a4b3c0012ab3700" }).success).toBe(true);
+    expect(createCategorySchema.safeParse({ name: "X", parentId: null }).success).toBe(true);
+    expect(createCategorySchema.safeParse({ name: "X", parentId: "abc" }).success).toBe(false);
+    expect(createCategorySchema.safeParse({ name: "X", ancestors: [] }).success).toBe(false);
+    expect(updateCategorySchema.safeParse({ parentId: null }).success).toBe(true);
     expect(updateCategorySchema.safeParse({}).success).toBe(false);
   });
 });

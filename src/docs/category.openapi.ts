@@ -19,12 +19,18 @@ const categoryIdParam = z.object({
   }),
 });
 
-const readNote = `Requires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role), so cashiers can browse categories. Categories are organization-wide.`;
+const TREE = [
+  "**Subcategories.** Categories nest at most 2 levels: top-level categories (`parentId: null`, `depth: 0`) and subcategories under them (`depth: 1`). A product can sit on either level.",
+  "- Names are unique among siblings (case-insensitive), so 'Accessories' may exist under both 'Mobiles' and 'Laptops'.",
+  "- `productCount` counts products directly in the category; `totalProductCount` adds those in its subcategories.",
+].join("\n");
+
+const readNote = `Requires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role), so cashiers can browse categories. Categories are organization-wide.\n\n${TREE}`;
 const writeNote = (permission: string) =>
   `Requires a **tenant** bearer token, an **organization-scoped role** and **\`${permission}\`** (categories share the product permissions).`;
 
 const notFound404 = errorResponse(
-  "Category does not exist in your organization (other organizations' and deleted categories look the same). Code `CATEGORY_NOT_FOUND`. (A `categoryId` that does not exist inside a product request body is a 400, not a 404.)",
+  "Category does not exist in your organization (other organizations' and deleted categories look the same). Code `CATEGORY_NOT_FOUND`. (A `categoryId` that does not exist inside a product request body, or a `parentId` in a category request body, is a 400, not a 404.)",
   "Category not found.",
   404,
   "CATEGORY_NOT_FOUND",
@@ -36,17 +42,24 @@ const write403 = errorResponse(
   403
 );
 const nameTaken409 = errorResponse(
-  "A category with this name already exists (case-insensitive). Code `CATEGORY_NAME_TAKEN`.",
-  "A category named 'Beverages' already exists.",
+  "A sibling (same parent, or another top-level category) already has this name (case-insensitive). Code `CATEGORY_NAME_TAKEN`. The same name under a different parent is allowed. The message ends `already exists under 'Parent'.` or `already exists at the top level.`; on update it can also come from moving into a parent that already has that name.",
+  "A category named 'Accessories' already exists under 'Mobiles'.",
   409,
   "CATEGORY_NAME_TAKEN",
   [{ field: "name", code: "CATEGORY_NAME_TAKEN" }]
 );
 const validation400 = errorResponse(
-  "Validation failed (code `VALIDATION_FAILED`): name 1-60 chars, sortOrder whole number 0-100000, unknown fields rejected, an update must carry at least one field. A malformed `categoryId` in the path also returns 400.",
-  "Request Validation Failed: name: Category name is required.",
+  [
+    "Validation failed. Codes:",
+    "- `VALIDATION_FAILED`: name 1-60 chars, sortOrder whole number 0-100000, parentId a 24-char hex id or null, unknown fields rejected, an update must carry at least one field. A malformed `categoryId` in the path also returns 400.",
+    "- `CATEGORY_NOT_FOUND`: `parentId` does not exist in your organization (`errors[0].field` is `parentId`).",
+    "- `CATEGORY_DEPTH_EXCEEDED`: the parent is itself a subcategory, or (on a move) the category has subcategories of its own and the parent is not `null` (`errors[0].meta.maxDepth` is 2).",
+    "- `CATEGORY_CYCLE` (update only): `parentId` is the category itself or one of its subcategories.",
+  ].join("\n"),
+  "'Smartphones' is already a subcategory; categories nest at most 2 levels.",
   400,
-  "VALIDATION_FAILED"
+  "CATEGORY_DEPTH_EXCEEDED",
+  [{ field: "parentId", code: "CATEGORY_DEPTH_EXCEEDED", meta: { maxDepth: 2 } }]
 );
 
 registry.registerPath({
@@ -54,7 +67,7 @@ registry.registerPath({
   path: base,
   tags,
   summary: "List categories",
-  description: `${readNote}\n\nReturns every category (a flat list, no pagination) ordered by \`sortOrder\`, then name, each with its \`productCount\`.`,
+  description: `${readNote}\n\nReturns every category as one flat list (no pagination, no nesting) ordered by \`sortOrder\`, then name, each with \`parentId\`, \`depth\`, \`productCount\` and \`totalProductCount\`. Build the tree on the client by grouping on \`parentId\`.`,
   security,
   responses: {
     200: {
@@ -93,7 +106,7 @@ registry.registerPath({
   path: base,
   tags,
   summary: "Create a category",
-  description: writeNote("product:create"),
+  description: `${writeNote("product:create")}\n\nSend \`parentId\` to create a subcategory; omit it (or send null) for a top-level category.`,
   security,
   request: { body: { required: true, content: json(createCategorySchema) } },
   responses: {
@@ -114,7 +127,7 @@ registry.registerPath({
   path: `${base}/{categoryId}`,
   tags,
   summary: "Update a category",
-  description: `${writeNote("product:update")}\n\nSend \`name\` and/or \`sortOrder\`.`,
+  description: `${writeNote("product:update")}\n\nSend \`name\`, \`sortOrder\` and/or \`parentId\`.\n\n- \`parentId\` moves the category under another top-level category, or to the top level with \`null\`. A category that has subcategories can only be top-level. Its products keep their \`categoryId\`.\n- The name must be free among the new siblings.`,
   security,
   request: { params: categoryIdParam, body: { required: true, content: json(updateCategorySchema) } },
   responses: {
@@ -136,7 +149,7 @@ registry.registerPath({
   path: `${base}/{categoryId}`,
   tags,
   summary: "Delete a category",
-  description: `${writeNote("product:delete")}\n\nSoft delete; the name becomes reusable. Refused while any product is in the category: move those products first.`,
+  description: `${writeNote("product:delete")}\n\nSoft delete; the name becomes reusable. Refused while any product is directly in the category (\`CATEGORY_IN_USE\`) or it still has subcategories (\`CATEGORY_HAS_CHILDREN\`): move or delete those first.`,
   security,
   request: { params: categoryIdParam },
   responses: {
@@ -149,7 +162,11 @@ registry.registerPath({
     403: write403,
     404: notFound404,
     409: errorResponse(
-      "Products still use this category. Code `CATEGORY_IN_USE`; `errors[0].meta.productCount` says how many.",
+      [
+        "Conflict. Codes:",
+        "- `CATEGORY_IN_USE`: products are directly in this category; `errors[0].meta.productCount` says how many.",
+        "- `CATEGORY_HAS_CHILDREN`: the category still has subcategories; `errors[0].meta.childCount` says how many. Checked after `CATEGORY_IN_USE`.",
+      ].join("\n"),
       "This category still has 24 products. Move them to another category first.",
       409,
       "CATEGORY_IN_USE",

@@ -473,7 +473,14 @@ export const listProductsQuerySchema = z.object({
     description: "Case-insensitive prefix match on name, SKU or barcode (UPC/EAN/ISBN).",
     example: "crew",
   }),
-  categoryId: z.string().optional().openapi({ description: "Filter by category. Use `none` for uncategorised.", example: "665f1c2e8a4b3c0012ab3700" }),
+  categoryId: z.string().optional().openapi({
+    description: "Filter by category, including its subcategories unless includeSubcategories=false. Use `none` for uncategorised.",
+    example: "665f1c2e8a4b3c0012ab3700",
+  }),
+  includeSubcategories: z.enum(["true", "false"]).optional().openapi({
+    description: "With categoryId: send exactly `false` to match only products directly in that category. Omitting it, or any other value (including FALSE, 0 or empty), includes subcategories; this never returns 400.",
+    example: "false",
+  }),
   type: z.enum(["goods", "service"]).optional(),
   isActive: z.enum(["true", "false"]).optional(),
   tag: z.string().optional().openapi({ description: "Filter by reporting tag.", example: "summer-2026" }),

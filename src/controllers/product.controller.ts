@@ -38,6 +38,7 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
   const result = await listProducts(resolveOrganizationId(req), {
     search: queryString(req.query.search),
     categoryId: queryString(req.query.categoryId),
+    includeSubcategories: queryString(req.query.includeSubcategories) !== "false",
     type: type === "goods" || type === "service" ? type : undefined,
     isActive: isActive === "true" ? true : isActive === "false" ? false : undefined,
     tag: queryString(req.query.tag),

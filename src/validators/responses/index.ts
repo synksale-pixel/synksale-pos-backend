@@ -41,7 +41,7 @@ export const ErrorResponseSchema = z
     }),
     code: z.string().optional().openapi({
       description:
-        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE` (`PRODUCT_IN_USE` and `VARIANT_IN_USE` are reserved for later phases and are not returned yet). Most older errors (401/403, plain 404/409) carry no code.",
+        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE` (`PRODUCT_IN_USE` and `VARIANT_IN_USE` are reserved for later phases and are not returned yet). Most older errors (401/403, plain 404/409) carry no code.",
       example: "TAX_RATE_NAME_TAKEN",
     }),
     requestId: z.string().uuid().openapi({
@@ -479,10 +479,18 @@ export const CategorySchema = z
     id: objectId("665f1c2e8a4b3c0012ab3700"),
     organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
     name: z.string().openapi({ example: "Beverages" }),
-    sortOrder: z.number().int().openapi({ example: 10 }),
+    sortOrder: z.number().int().openapi({ description: "Order among siblings, ascending; ties sort by name.", example: 10 }),
+    parentId: objectId("665f1c2e8a4b3c0012ab3700")
+      .nullable()
+      .openapi({ description: "The parent category; null for a top-level category.", example: null as unknown as string }),
+    depth: z.number().int().openapi({ description: "0 for a top-level category, 1 for a subcategory.", example: 0 }),
     productCount: z.number().int().openapi({
-      description: "Non-deleted products in this category.",
+      description: "Non-deleted products directly in this category (not counting its subcategories).",
       example: 24,
+    }),
+    totalProductCount: z.number().int().openapi({
+      description: "Non-deleted products in this category and all its subcategories.",
+      example: 31,
     }),
     createdAt: isoDate("2026-10-13T09:00:00.000Z"),
     updatedAt: isoDate("2026-10-13T09:00:00.000Z"),
@@ -541,7 +549,14 @@ const productCore = {
   type: z.enum(["goods", "service"]).openapi({ example: "goods" }),
   itemType: z.enum(["single", "variant"]).openapi({ example: "variant" }),
   category: z
-    .object({ id: objectId("665f1c2e8a4b3c0012ab3700"), name: z.string().openapi({ example: "Apparel" }) })
+    .object({
+      id: objectId("665f1c2e8a4b3c0012ab3700"),
+      name: z.string().openapi({ example: "T-shirts" }),
+      path: z.string().openapi({
+        description: "Category names from the top level down, joined by ' › '. Just the name for a top-level category. Use it where names may repeat under different parents.",
+        example: "Apparel › T-shirts",
+      }),
+    })
     .nullable(),
   unit: z.string().openapi({ example: "pcs" }),
   imageUrl: z.string().nullable().openapi({ example: "https://cdn.example.com/tshirt.jpg" }),
