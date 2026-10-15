@@ -133,7 +133,7 @@ export function generateOpenApiDocument() {
       { name: "Organization", description: "Read your organization's profile and currency, and update its legal name, TRN and settings (`organization:configure`)." },
       { name: "Stores", description: "Create and manage an organization's stores (locations)." },
       { name: "Tax Rates", description: "The organization's VAT rates used by products and documents. Anyone signed in can read; changes need `tax:manage` and an organization-scoped role." },
-      { name: "Categories", description: "Flat, organization-wide product categories." },
+      { name: "Categories", description: "Organization-wide product categories, nested at most 2 levels (category → subcategory)." },
       { name: "Products", description: "The product catalog: single items, variant items (Size × Colour) and services, with barcode/SKU lookup." },
       { name: "User Invites", description: "Invite staff to an organization and accept invitations." },
       { name: "Staff Management", description: "Read the staff roster and manage an existing user's roles, store assignments and access." },

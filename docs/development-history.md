@@ -923,3 +923,47 @@ on a busy machine failed four whole files once during this work.
 
 Manual: Requestly Section 7 (`docs/requestly/section-7-catalog.postman_collection.json`), replayed
 against the app on the in-memory database before handing over. 579 tests pass.
+
+---
+
+## 📦 Catalog — subcategories
+
+Approved 2026-10-15 after a tech-lead review, before Phase 2 (the stock ledger does not read
+categories, but category reports will, so the tree is cheapest to add now).
+
+- **Depth 2** (category → subcategory), one constant `MAX_CATEGORY_DEPTH` in
+  `category.model.ts`; raising it needs no data change.
+- **Model:** `parentId` (null for a root) plus `ancestors` (root first). Products keep a single
+  `categoryId` and may sit on either level; ancestors are never copied onto products, so a move
+  touches categories only.
+- **Names unique among siblings:** the unique index is now `{organizationId, parentId, nameKey}`.
+  The old `{organizationId, nameKey}` index must be dropped with `npm run sync:indexes -- --apply`
+  on every environment, or it keeps refusing "Accessories" under a second parent (and the
+  service reports that as `CATEGORY_NAME_TAKEN`, so it would look like correct behaviour).
+- **Moves:** `PATCH /categories/{id}` with `parentId` (null for the top level). Refused with
+  `CATEGORY_CYCLE` (itself or its own subcategory) or `CATEGORY_DEPTH_EXCEEDED` (the parent is a
+  subcategory, or the category has subcategories and would stop being top-level). The move
+  rewrites the ancestors of the whole subtree in a transaction; at depth 2 a category with
+  children can only stay top-level, so that rewrite only does work once the limit is raised.
+- **Delete:** `CATEGORY_IN_USE` (direct products) is unchanged and checked first; a category
+  with subcategories is refused with `CATEGORY_HAS_CHILDREN` (`meta.childCount`).
+- **Responses:** categories gain `parentId`, `depth` and `totalProductCount` (`productCount`
+  stays direct-only); the list stays flat. A product's `category` gains `path`
+  ("Mobiles › Accessories").
+- **Product list:** `categoryId` now includes subcategories; `includeSubcategories=false` limits
+  it to direct members.
+- Categories stored before this change have neither field; Mongoose fills the defaults on read
+  and MongoDB matches a missing `parentId` as null, so they behave as top-level categories
+  without a data migration (covered by a test).
+
+Concurrency (found by the pos-tester review): the tree checks span documents (a parent's depth,
+a category's children), but each request checked them before writing, so two admins acting at
+the same instant could put a child under a category being moved (leaving it 3 levels deep with
+stale `ancestors`) or under one being deleted (an orphan). Create, move and delete now read and
+check the tree inside the transaction that writes it, and putting a child under a category also
+writes to that category (`claimParent`, which bumps a hidden `treeVersion`). MongoDB only
+detects a conflict between transactions that write the same document, so this write makes the
+two requests conflict; the loser is retried and its checks see the winner's result. Three tests
+force each interleaving by pausing one request at its first write; all three fail with the claim
+disabled. Products still don't claim their category, so a product created at the same instant
+its category is deleted can reference a deleted category (noted in `deleteCategory`).

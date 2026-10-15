@@ -21,7 +21,6 @@ import {
   ProductVariantDocument,
   deriveScanCodes,
 } from "../models/productVariant.model";
-import { Category } from "../models/category.model";
 import { TaxRate } from "../models/taxRate.model";
 import { ApiError, ApiErrorDetail } from "../utils/ApiError";
 import { parseMoney, formatMoney } from "../utils/money";
@@ -30,7 +29,7 @@ import { logger } from "../config/logger.config";
 import { getCurrency } from "../config/currencies.config";
 import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
-import { assertCategoryExists } from "./category.service";
+import { assertCategoryExists, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
 import { recordAudit } from "./audit.service";
 import type {
   CreateProductInput,
@@ -43,6 +42,8 @@ export interface ListProductsInput {
   search?: string;
   /** A category id, or "none" for uncategorised products. */
   categoryId?: string;
+  /** With categoryId: also match products in its subcategories (default true). */
+  includeSubcategories?: boolean;
   type?: "goods" | "service";
   isActive?: boolean;
   tag?: string;
@@ -445,7 +446,6 @@ async function inTransaction(work: (session: mongoose.ClientSession) => Promise<
 // Response shapes
 // ==========================================
 
-type CategoryRef = { id: mongoose.Types.ObjectId; name: string } | null;
 type TaxRateRef = { id: mongoose.Types.ObjectId; name: string; rate: number } | null;
 
 function variantName(product: ProductDocument, values: Map<string, string>): string {
@@ -480,7 +480,12 @@ function priceRange(variants: ProductVariantDocument[], decimals: number) {
   return { min: formatMoney(Math.min(...prices), decimals), max: formatMoney(Math.max(...prices), decimals) };
 }
 
-function productCore(product: ProductDocument, variants: ProductVariantDocument[], category: CategoryRef, decimals: number) {
+function productCore(
+  product: ProductDocument,
+  variants: ProductVariantDocument[],
+  category: CategoryRef | null,
+  decimals: number
+) {
   return {
     _id: product._id,
     id: product._id,
@@ -499,7 +504,7 @@ function productCore(product: ProductDocument, variants: ProductVariantDocument[
 function toProductView(
   product: ProductDocument,
   variants: ProductVariantDocument[],
-  category: CategoryRef,
+  category: CategoryRef | null,
   taxRate: TaxRateRef,
   decimals: number
 ) {
@@ -538,16 +543,16 @@ function toProductView(
 
 /** Loads everything the full product response needs. */
 async function buildProductView(organizationId: string, product: ProductDocument, decimals?: number) {
-  const [variants, category, taxRate, resolvedDecimals] = await Promise.all([
+  const [variants, categories, taxRate, resolvedDecimals] = await Promise.all([
     ProductVariant.find({ organizationId, productId: product._id }).sort({ _id: 1 }),
-    product.categoryId ? Category.findOne({ _id: product.categoryId, organizationId }).select("name") : null,
+    categoryRefs(organizationId, product.categoryId ? [product.categoryId] : []),
     product.taxRateId ? TaxRate.findOne({ _id: product.taxRateId, organizationId }).select("name rate") : null,
     decimals ?? currencyDecimals(organizationId),
   ]);
   return toProductView(
     product,
     variants,
-    category ? { id: category._id, name: category.name } : null,
+    product.categoryId ? (categories.get(product.categoryId.toString()) ?? null) : null,
     taxRate ? { id: taxRate._id, name: taxRate.name, rate: taxRate.rate } : null,
     resolvedDecimals
   );
@@ -571,7 +576,11 @@ export async function listProducts(organizationId: string, input: ListProductsIn
     if (input.categoryId === "none") {
       filter.categoryId = null;
     } else if (mongoose.Types.ObjectId.isValid(input.categoryId)) {
-      filter.categoryId = new mongoose.Types.ObjectId(input.categoryId);
+      const categoryId = new mongoose.Types.ObjectId(input.categoryId);
+      filter.categoryId =
+        input.includeSubcategories === false
+          ? categoryId
+          : { $in: await categoryWithDescendants(organizationId, categoryId) };
     } else {
       // A malformed id matches nothing, as an unknown one would.
       return { products: [], pagination: buildPaginationMeta(page, limit, 0) };
@@ -604,10 +613,12 @@ export async function listProducts(organizationId: string, input: ListProductsIn
   ]);
 
   const productIds = products.map((product) => product._id);
-  const categoryIds = products.map((product) => product.categoryId).filter(Boolean);
-  const [variants, categories] = await Promise.all([
+  const categoryIds = products
+    .map((product) => product.categoryId)
+    .filter((id): id is mongoose.Types.ObjectId => Boolean(id));
+  const [variants, categoryById] = await Promise.all([
     ProductVariant.find({ organizationId, productId: { $in: productIds } }).sort({ _id: 1 }),
-    categoryIds.length > 0 ? Category.find({ organizationId, _id: { $in: categoryIds } }).select("name") : [],
+    categoryRefs(organizationId, categoryIds),
   ]);
 
   const variantsByProduct = new Map<string, ProductVariantDocument[]>();
@@ -615,14 +626,13 @@ export async function listProducts(organizationId: string, input: ListProductsIn
     const id = variant.productId.toString();
     variantsByProduct.set(id, [...(variantsByProduct.get(id) ?? []), variant]);
   }
-  const categoryById = new Map(categories.map((category) => [category._id.toString(), category]));
 
   return {
     products: products.map((product) => {
       const own = variantsByProduct.get(product._id.toString()) ?? [];
-      const category = product.categoryId ? categoryById.get(product.categoryId.toString()) : undefined;
+      const category = product.categoryId ? (categoryById.get(product.categoryId.toString()) ?? null) : null;
       return {
-        ...productCore(product, own, category ? { id: category._id, name: category.name } : null, decimals),
+        ...productCore(product, own, category, decimals),
         sku: product.itemType === "single" ? (own.find((variant) => variant.isDefault)?.sku ?? null) : null,
         variantCount: own.filter((variant) => variant.isActive).length,
         updatedAt: product.updatedAt,
