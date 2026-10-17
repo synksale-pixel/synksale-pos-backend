@@ -13,7 +13,10 @@
  * - Quantities (reorderPoint) are numbers with at most 3 decimals; whole numbers unless the unit
  *   allows decimals (kg, g, L, mL, m, cm).
  * - `type` and `itemType` are fixed at creation.
- * - Opening stock is not accepted yet; it arrives with the stock ledger (Phase 2).
+ * - Opening stock (Phase 2) is a per-store list on each variant (`inventory.openingStock` for a
+ *   single item, `variants[i].openingStock` for a variant item). It is accepted only when the
+ *   product or variant is created and becomes `opening` stock movements; later changes go
+ *   through stock adjustments.
  */
 
 import "../config/openapi.registry"; // must load first: enables .openapi() on Zod
@@ -26,11 +29,11 @@ import { DEFAULT_UNIT, QUANTITY_DECIMALS, UNIT_CODES, unitAllowsDecimal } from "
 
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
 
-const objectIdField = (label: string, example: string) =>
+export const objectIdField = (label: string, example: string) =>
   z.string().regex(OBJECT_ID, { message: `${label} must be a 24-character hex id.` }).openapi({ example });
 
 /** Non-negative decimal string with at most 3 decimals; the currency's own limit is checked later. */
-const moneyField = (description: string, example: string) =>
+export const moneyField = (description: string, example: string) =>
   z
     .string({ invalid_type_error: "Amounts are sent as decimal strings, e.g. \"1.250\"." })
     .trim()
@@ -39,14 +42,32 @@ const moneyField = (description: string, example: string) =>
     })
     .openapi({ description, example });
 
-const quantityField = (description: string, example: number) =>
+const MAX_QUANTITY = 1_000_000_000;
+
+const hasQuantityDecimals = (value: number) => Number.isInteger(Number((value * 10 ** QUANTITY_DECIMALS).toFixed(6)));
+const QUANTITY_DECIMALS_MESSAGE = `Quantity may have at most ${QUANTITY_DECIMALS} decimal places.`;
+
+/** Non-negative quantity with at most 3 decimals; whole-unit rules are checked against the unit. */
+export const quantityField = (description: string, example: number) =>
   z
     .number({ invalid_type_error: "Quantity must be a number." })
     .min(0, { message: "Quantity cannot be negative." })
-    .max(1_000_000_000, { message: "Quantity is too large." })
-    .refine((value) => Number.isInteger(Number((value * 10 ** QUANTITY_DECIMALS).toFixed(6))), {
-      message: `Quantity may have at most ${QUANTITY_DECIMALS} decimal places.`,
-    })
+    .max(MAX_QUANTITY, { message: "Quantity is too large." })
+    .refine(hasQuantityDecimals, { message: QUANTITY_DECIMALS_MESSAGE })
+    .openapi({ description, example });
+
+/** Strictly positive quantity (opening stock, transfer lines). */
+export const positiveQuantityField = (description: string, example: number) =>
+  quantityField(description, example).refine((value) => value > 0, { message: "Quantity must be greater than zero." });
+
+/** Signed, non-zero quantity change (adjustments). */
+export const quantityChangeField = (description: string, example: number) =>
+  z
+    .number({ invalid_type_error: "Quantity must be a number." })
+    .min(-MAX_QUANTITY, { message: "Quantity is too large." })
+    .max(MAX_QUANTITY, { message: "Quantity is too large." })
+    .refine((value) => value !== 0, { message: "quantityChange cannot be zero." })
+    .refine(hasQuantityDecimals, { message: QUANTITY_DECIMALS_MESSAGE })
     .openapi({ description, example });
 
 const optionalText = (label: string, max: number, example: string) =>
@@ -161,6 +182,27 @@ const attributeValuesField = z
     example: { Size: "M", Colour: "Red" },
   });
 
+export const openingStockLineSchema = z
+  .object({
+    storeId: objectIdField("storeId", "665f1c2e8a4b3c0012ab3400"),
+    quantity: positiveQuantityField("Quantity on hand in that store.", 24),
+    unitCost: moneyField(
+      "Opening stock rate **per unit** (not a total value), VAT-exclusive. Defaults to the variant's cost price, or 0 when it has none.",
+      "1.600"
+    ).optional(),
+  })
+  .strict({ message: "Unknown opening stock field. Use storeId, quantity and unitCost." })
+  .openapi("OpeningStockLineInput");
+
+const openingStockField = z
+  .array(openingStockLineSchema)
+  .min(1, { message: "Omit openingStock rather than sending an empty list." })
+  .max(50, { message: "At most 50 stores per opening stock list." })
+  .openapi({
+    description:
+      "Goods that track inventory only. One entry per store (each store at most once). Recorded as `opening` stock movements when the product or variant is created; not accepted on update.",
+  });
+
 /** Fields of a sellable variant (also used for the default variant of a single item). */
 const variantFields = {
   sku: skuField.nullable().optional(),
@@ -174,8 +216,9 @@ export const variantInputSchema = z
   .object({
     attributeValues: attributeValuesField,
     ...variantFields,
+    openingStock: openingStockField.optional(),
   })
-  .strict({ message: "Unknown variant field. Opening stock is not accepted yet (it arrives with stock tracking)." })
+  .strict({ message: "Unknown variant field." })
   .openapi("ProductVariantInput");
 
 // ==========================================
@@ -209,10 +252,14 @@ const inventoryGroup = z
     }),
     reorderPoint: variantFields.reorderPoint.openapi({ description: "Single items only." }),
     returnable: z.boolean().optional().openapi({ description: "Default true.", example: true }),
+    openingStock: openingStockField.optional().openapi({
+      description:
+        "Single items only, on create only. Per-store opening stock; variant items send it on each variant. Recorded as `opening` stock movements.",
+    }),
   })
   .strict({
     message:
-      "Unknown inventory field. openingStock / openingStockValue are not accepted yet (they arrive with stock tracking); valuationMethod is fixed to weighted average.",
+      "Unknown inventory field. Send opening stock as inventory.openingStock: [{ storeId, quantity, unitCost }]; valuationMethod is fixed to weighted average.",
   });
 
 const productFields = {
@@ -302,6 +349,20 @@ function checkReorderPoint(value: number | null | undefined, unit: string | unde
   }
 }
 
+/** Each store at most once, and whole quantities for a whole-number unit. */
+function checkOpeningStock(
+  lines: z.infer<typeof openingStockLineSchema>[] | undefined,
+  unit: string | undefined,
+  path: (string | number)[],
+  issues: Issue[]
+) {
+  if (!lines) return;
+  for (const storeId of duplicates(lines.map((line) => line.storeId))) {
+    issues.push({ path, message: `Store '${storeId}' is listed more than once.` });
+  }
+  lines.forEach((line, index) => checkReorderPoint(line.quantity, unit, [...path, index, "quantity"], issues));
+}
+
 /** Validates the attributes and the variants against them (used on create). */
 function checkVariants(
   attributes: z.infer<typeof attributesField>,
@@ -340,6 +401,7 @@ function checkVariants(
     }
     combos.add(combo);
     checkReorderPoint(variant.reorderPoint, unit, ["variants", index, "reorderPoint"], issues);
+    checkOpeningStock(variant.openingStock, unit, ["variants", index, "openingStock"], issues);
   });
 
   for (const sku of duplicates(variants.map((v) => v.sku).filter((s): s is string => Boolean(s)))) {
@@ -369,7 +431,7 @@ export const createProductSchema = z
   })
   .strict({
     message:
-      "Unknown product field. openingStock / openingStockValue are not accepted yet (they arrive with stock tracking); price and stock are computed by the server.",
+      "Unknown product field. Opening stock goes in inventory.openingStock (single items) or variants[i].openingStock; price and stock are computed by the server.",
   })
   .superRefine((body, ctx) => {
     const issues: Issue[] = [];
@@ -387,6 +449,15 @@ export const createProductSchema = z
       }
     }
 
+    // Services never track inventory, so this covers them too.
+    if (body.type === "service" || body.inventory?.trackInventory === false) {
+      const message = "Opening stock needs a goods item that tracks inventory.";
+      if (body.inventory?.openingStock) issues.push({ path: ["inventory", "openingStock"], message });
+      body.variants?.forEach((variant, index) => {
+        if (variant.openingStock) issues.push({ path: ["variants", index, "openingStock"], message });
+      });
+    }
+
     if (body.taxPreference !== "standard" && body.taxRateId) {
       issues.push({ path: ["taxRateId"], message: `A ${body.taxPreference} product must not have a tax rate.` });
     }
@@ -398,6 +469,7 @@ export const createProductSchema = z
       if (body.attributes) issues.push({ path: ["attributes"], message: "Only variant items have attributes." });
       if (body.variants) issues.push({ path: ["variants"], message: "Only variant items have variants." });
       checkReorderPoint(body.inventory?.reorderPoint, body.unit, ["inventory", "reorderPoint"], issues);
+      checkOpeningStock(body.inventory?.openingStock, body.unit, ["inventory", "openingStock"], issues);
     } else {
       const singleOnly: [boolean, (string | number)[]][] = [
         [body.sku !== undefined, ["sku"]],
@@ -405,6 +477,7 @@ export const createProductSchema = z
         [body.sales?.sellingPrice !== undefined, ["sales", "sellingPrice"]],
         [body.purchase?.costPrice !== undefined, ["purchase", "costPrice"]],
         [body.inventory?.reorderPoint !== undefined, ["inventory", "reorderPoint"]],
+        [body.inventory?.openingStock !== undefined, ["inventory", "openingStock"]],
       ];
       for (const [present, path] of singleOnly) {
         if (present) issues.push({ path, message: "Variant items set this on each variant instead." });
@@ -442,6 +515,12 @@ export const updateProductSchema = z
       issues.push({ path: ["taxRateId"], message: `A ${body.taxPreference} product must not have a tax rate.` });
     }
     if (body.attributes) checkAttributeDuplicates(body.attributes, issues);
+    if (body.inventory?.openingStock !== undefined) {
+      issues.push({
+        path: ["inventory", "openingStock"],
+        message: "Opening stock is set only when a product is created. Use a stock adjustment instead.",
+      });
+    }
     for (const issue of issues) ctx.addIssue({ code: z.ZodIssueCode.custom, ...issue });
   });
 

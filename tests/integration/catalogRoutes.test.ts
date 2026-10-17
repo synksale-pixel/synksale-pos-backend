@@ -81,7 +81,8 @@ async function tokenFor(
 
 let admin: string;
 let cashier: string;
-let accountant: string;
+// An organization role without product:read (the accountant has it since Phase 2, for stock valuation).
+let noCatalog: string;
 let categoryId: string;
 
 beforeEach(async () => {
@@ -90,7 +91,14 @@ beforeEach(async () => {
   cashier = await tokenFor(org._id, "cashier@alnoor.test", {
     storeAccess: [{ storeId: store._id, roleId: role("cashier")._id }],
   });
-  accountant = await tokenFor(org._id, "accountant@alnoor.test", { orgRoleId: role("accountant")._id });
+  const reportsOnly = await Role.create({
+    organizationId: org._id,
+    scope: "organization",
+    name: "Reports only",
+    slug: "reports_only",
+    permissions: ["report:view_org"],
+  });
+  noCatalog = await tokenFor(org._id, "reports@alnoor.test", { orgRoleId: reportsOnly._id });
 
   // The Swagger examples reference fixed ids; point them at real records.
   const category = await request.post(CATEGORIES).set(auth(admin)).send({ name: "Beverages", sortOrder: 10 });
@@ -137,7 +145,7 @@ describe("categories over HTTP", () => {
   it("lets a cashier read but not write; refuses an org role without product:read", async () => {
     expect((await request.get(CATEGORIES).set(auth(cashier))).status).toBe(200);
     expect((await request.post(CATEGORIES).set(auth(cashier)).send({ name: "X" })).status).toBe(403);
-    expect((await request.get(CATEGORIES).set(auth(accountant))).status).toBe(403);
+    expect((await request.get(CATEGORIES).set(auth(noCatalog))).status).toBe(403);
     expect((await request.get(CATEGORIES)).status).toBe(401);
   });
 
@@ -244,6 +252,18 @@ describe("products over HTTP", () => {
     expect(opening.status).toBe(400);
     expect(opening.body.code).toBe("VALIDATION_FAILED");
 
+    // Well-formed opening stock is refused, not dropped, until the stock ledger ships.
+    const store = new mongoose.Types.ObjectId().toString();
+    const contractOpening = await createFromExample({
+      ...singleExample,
+      sku: "OPEN-1",
+      barcodes: undefined,
+      inventory: { openingStock: [{ storeId: store, quantity: 2 }] },
+    });
+    expect(contractOpening.status).toBe(400);
+    expect(contractOpening.body.errors[0]).toMatchObject({ field: "inventory.openingStock", code: "VALIDATION_FAILED" });
+    expect((await request.get(`${PRODUCTS}?search=OPEN-1`).set(auth(admin))).body.data.products).toHaveLength(0);
+
     const variantOnly = await request.post(`${PRODUCTS}/${created._id}/variants`).set(auth(admin)).send({ attributeValues: { Size: "S" }, sellingPrice: "1" });
     expect(variantOnly.status).toBe(400);
     expect(variantOnly.body.code).toBe("PRODUCT_NOT_VARIANT_ITEM");
@@ -259,7 +279,7 @@ describe("products over HTTP", () => {
     expect((await request.post(PRODUCTS).set(auth(cashier)).send(serviceExample)).status).toBe(403);
     expect((await request.patch(`${PRODUCTS}/${id}`).set(auth(cashier)).send({ name: "X" })).status).toBe(403);
     expect((await request.delete(`${PRODUCTS}/${id}`).set(auth(cashier))).status).toBe(403);
-    expect((await request.get(PRODUCTS).set(auth(accountant))).status).toBe(403);
+    expect((await request.get(PRODUCTS).set(auth(noCatalog))).status).toBe(403);
     expect((await request.get(PRODUCTS)).status).toBe(401);
   });
 

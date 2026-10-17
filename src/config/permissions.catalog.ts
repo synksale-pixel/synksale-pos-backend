@@ -16,6 +16,7 @@ export type PermissionKey =
   | "product:update"
   | "product:delete"
   // Inventory
+  | "inventory:read"
   | "inventory:adjust"
   | "inventory:transfer"
   // Reports
@@ -95,6 +96,14 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
   },
 
   // ===== Inventory =====
+  {
+    // Stock history, adjustments, transfers and cost figures. Without it, stock reads still show
+    // quantities (via product:read) but costs come back null.
+    key: "inventory:read",
+    label: "View Stock History and Costs",
+    category: "Inventory",
+    minScope: "store",
+  },
   {
     key: "inventory:adjust",
     label: "Adjust Inventory Levels",

@@ -37,7 +37,9 @@ app.use(
   cors({
     origin: env.CORS_ORIGIN === "*" ? "*" : env.CORS_ORIGIN.split(","),
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id", "Idempotency-Key"],
+    // Without this the browser hides these response headers from the frontend.
+    exposedHeaders: ["X-Request-Id", "Idempotent-Replayed"],
     credentials: true,
   })
 );

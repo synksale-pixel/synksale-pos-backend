@@ -967,3 +967,77 @@ two requests conflict; the loser is retried and its checks see the winner's resu
 force each interleaving by pausing one request at its first write; all three fail with the claim
 disabled. Products still don't claim their category, so a product created at the same instant
 its category is deleted can reference a deleted category (noted in `deleteCategory`).
+
+---
+
+## 📦 Stock — Phase 2 contract (validators + Swagger, no endpoints yet)
+
+The stock ledger API is defined first, for the frontend developer to sign off, as in Phase 1.
+The new **Inventory** endpoints are documented in Swagger with a "contract preview" note and
+return 404 until they are implemented.
+
+Decisions (approved 2026-10-17):
+
+- **Ledger.** Every change to stock is an append-only movement (`opening`, `adjustment`,
+  `transfer_out`, `transfer_in`; purchases and sales will add more types). A stock level per
+  store and variant is a projection, updated in the same transaction. Corrections are new
+  movements, never edits.
+- **Costing:** weighted average cost per store, VAT-exclusive, recorded on every movement.
+- **Opening stock** goes on the product form as a per-store list
+  (`inventory.openingStock` / `variants[i].openingStock`: `[{ storeId, quantity, unitCost? }]`),
+  only when a product or variant is created.
+- **Adjustments** (`POST /stores/{storeId}/stock-adjustments`, `inventory:adjust`) use a fixed
+  reason list (damaged, expired, theft_loss, found, count_correction, other + note) and
+  either a signed `quantityChange` or a `countedQuantity` ("set to counted").
+- **Transfers** (`POST /stock-transfers`, organization role + `inventory:transfer`) are one
+  step and instant, and always need stock at the source, even when negative stock is allowed.
+- **Negative stock** follows `settings.inventory.allowNegativeStock` (`INSUFFICIENT_STOCK`).
+- **Idempotency-Key header** is required on adjustments and transfers: a retry with the same
+  key and body replays the first response.
+- **Reads:** store stock list (`product:read`), a product's stock by store, store movement
+  history and adjustments (`inventory:adjust`), transfers (`inventory:transfer`). Products gain
+  `stockOnHand` (optional in the schema until the ledger ships).
+- **Locks** once a variant has movements: `UNIT_LOCKED`, `STOCK_ON_HAND` (turning tracking off
+  with stock), and `PRODUCT_IN_USE` / `VARIANT_IN_USE` become live.
+
+Until the ledger ships, product create and add-variant refuse a well-formed `openingStock` with
+400 `VALIDATION_FAILED` instead of silently dropping it.
+
+Changes from the tech-lead review (approved 2026-10-17):
+
+- **CORS** now allows the `Idempotency-Key` request header and exposes `Idempotent-Replayed`
+  and `X-Request-Id`. Without it every adjustment and transfer would fail in the browser while
+  passing in Supertest and Requestly, which skip preflight.
+- **`opening_balance` reason** gives products created before stock tracking their first stock
+  (add or count; writes `opening` movements) instead of mislabelling it `found`.
+- **Reasons decide direction:** `damaged` / `expired` / `theft_loss` remove only, `found` and
+  `opening_balance` add only, `count_correction` and `other` either way; counts only with
+  `count_correction` or `opening_balance`.
+- **New `inventory:read` permission** (store scope) for movements, adjustments, transfers and
+  cost figures; seeded for store_manager, inventory_clerk and accountant (which also gains
+  `product:read`), and org_admin gets every permission. Without it, stock reads show quantities
+  but `averageCost` / `stockValue` are null, and once the ledger ships so is `costPrice`.
+  Transfer reads are store-filtered rather than organization-only.
+- **Open-ended response values:** a movement's `source.type` and `reason` are plain strings
+  (later phases add values); `source.number` is reserved for document numbers.
+- **Dates:** bare `from` / `to` dates are read in the organization's timezone, both inclusive.
+- Opening stock `unitCost` stays **per unit**; the frontend labels it "rate per unit".
+
+### Deploy note
+
+Run `npm run sync:system-roles` (part of `npm run migrate`) so existing organizations' roles
+receive `inventory:read` (and the accountant `product:read`).
+
+Testing: `tests/unit/stockValidator.test.ts` pins the contract (Swagger examples parse, line
+rules, reason directions, transfer rules, the idempotency header, opening stock on the product
+form); `tests/integration/cors.test.ts` checks the preflight. The catalog route tests now use a
+custom reports-only role as "an organization role without `product:read`".
+
+The pos-tester review added `tests/integration/stockContract.test.ts` (opening stock refused on
+create, add-variant and update without persisting anything; `inventory:read` seeding and the
+system-role sync for existing organizations; accountant catalog access and tenant isolation; the
+role privilege ceiling for `inventory:read`; the OpenAPI document lists the Inventory paths) and
+`tests/unit/stockValidatorEdgeCases.test.ts` (quantity precision and range, non-numeric input,
+strict-mode injection, notes, reasons, the idempotency key format). No source bugs found. The
+"returns 404" and opening-stock refusal tests are in their own `describe` blocks, to be flipped
+when the ledger ships. 684 tests pass.

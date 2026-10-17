@@ -36,10 +36,15 @@ const CONTRACT = [
   "- `type` (goods/service) and `itemType` (single/variant) cannot change after creation. Services are single, have no brand/manufacturer and never track inventory.",
   "- SKU is optional and unique per organization (case-insensitive). UPC/EAN/ISBN are unique per organization and scannable; MPN is reference only.",
   "- Quantities (`reorderPoint`) are whole numbers unless the unit is kg, g, L, mL, m or cm (up to 3 decimals).",
-  "- **Not accepted yet:** `openingStock` / `openingStockValue` (arrive with stock tracking), `valuationMethod` (always weighted average), image uploads (`imageUrl` is a link). `price` and `stock` are computed by the server, not sent.",
+  "- **Opening stock** (Phase 2 contract preview: refused with 400 `VALIDATION_FAILED` until stock tracking ships): goods that track inventory may send a per-store list `[{ storeId, quantity, unitCost? }]`, as `inventory.openingStock` for a single item or `variants[i].openingStock` for each variant of a variant item. Each store at most once; quantities follow the unit rule above; `unitCost` is the VAT-exclusive rate **per unit** (not a total value) and defaults to the variant's cost price (then 0). It is recorded as `opening` stock movements in the same transaction, and accepted only on create (later changes are stock adjustments).",
+  "- **Not accepted:** `valuationMethod` (always weighted average), image uploads (`imageUrl` is a link). `price` and `stock` are computed by the server, not sent.",
 ].join("\n");
 
-const readNote = `Requires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role), so cashiers can search and scan. The catalog is organization-wide.`;
+const STOCK_PREVIEW = "(Phase 2 contract preview: returned once stock tracking ships.)";
+
+const readNote = `Requires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role), so cashiers can search and scan. The catalog is organization-wide.
+
+**Stock fields** (Phase 2 contract preview: present once stock tracking ships; absent until then): each variant carries \`stockOnHand\` (quantity across all stores, null when the product does not track inventory; per-store figures: GET /products/{productId}/stock) and each list row carries the product's total. \`costPrice\` becomes null for callers without \`inventory:read\` (see the field description): treat null as "not visible to you", not "no cost".`;
 const writeNote = (permission: string) =>
   `Requires a **tenant** bearer token, an **organization-scoped role** and **\`${permission}\`**.`;
 
@@ -82,8 +87,10 @@ const malformedId400 = errorResponse(
   400
 );
 
+const OPENING_STOCK_CODES = `- \`STORE_NOT_FOUND\` / \`STORE_INACTIVE\`: an opening stock \`storeId\` is not a store of your organization, or is deactivated (\`errors[0].field\` is e.g. \`inventory.openingStock[0].storeId\` or \`variants[1].openingStock[0].storeId\`). ${STOCK_PREVIEW}`;
+
 const createProduct400 = errorResponse(
-  ["Bad request. Codes:", BODY_CODES, MONEY_CODES, ...REFERENCE_CODES].join("\n"),
+  ["Bad request. Codes:", BODY_CODES, MONEY_CODES, ...REFERENCE_CODES, OPENING_STOCK_CODES].join("\n"),
   "Request Validation Failed: sales.sellingPrice: Selling price is required for a single item.",
   400,
   "VALIDATION_FAILED"
@@ -111,6 +118,8 @@ const addVariant400 = errorResponse(
       " Service rules: `attributeValues` that do not give exactly one value per attribute or use an unknown option (`errors[0].field` is `attributeValues` or `attributeValues.<Attribute>`); a fractional `reorderPoint` for a whole-number unit.",
     MONEY_CODES,
     "- `PRODUCT_NOT_VARIANT_ITEM`: the product is a single item (its one hidden default variant is edited with PATCH /products/{productId}).",
+    `- \`VALIDATION_FAILED\` on \`openingStock\`: the product does not track inventory, or a fractional quantity for a whole-number unit. ${STOCK_PREVIEW}`,
+    OPENING_STOCK_CODES.replace("`inventory.openingStock[0].storeId` or `variants[1].openingStock[0].storeId`", "`openingStock[0].storeId`"),
     "- A malformed `productId` in the path also returns 400 (no `code`).",
   ].join("\n"),
   "This product is a single item and has no separately managed variants.",
@@ -149,6 +158,8 @@ const update409 = errorResponse(
     UNIQUENESS_LINE,
     '- `ATTRIBUTE_OPTION_IN_USE`: `attributes` removes or renames an option that a variant uses (one `errors` item per option: `{ field: "attributes", code, message, meta: { attribute, option } }`).',
     "- `ATTRIBUTES_LOCKED`: `attributes` adds or removes a whole attribute (`errors[0].field` is `attributes`).",
+    `- \`UNIT_LOCKED\`: \`unit\` changes while any variant has stock movements; stored quantities would change meaning. ${STOCK_PREVIEW}`,
+    `- \`STOCK_ON_HAND\`: \`inventory.trackInventory: false\` while any store holds non-zero stock of a variant; adjust it to zero first. ${STOCK_PREVIEW}`,
   ].join("\n"),
   "Option 'M' of Size is used by a variant and cannot be removed.",
   409,
@@ -231,6 +242,20 @@ export const variantExample = {
     { attributeValues: { Size: "L", Colour: "Red" }, sku: "TSHIRT-RED-L", sellingPrice: "5.000", costPrice: "2.200", barcodes: { ean: "6291041500220" } },
   ],
   inventory: { trackInventory: true, returnable: true },
+};
+
+export const singleWithOpeningStockExample = {
+  ...singleExample,
+  sku: "COF-AR-500",
+  barcodes: { ean: "6291041500220" },
+  name: "Arabic Coffee 500g",
+  inventory: {
+    ...singleExample.inventory,
+    openingStock: [
+      { storeId: "665f1c2e8a4b3c0012ab3400", quantity: 24, unitCost: "1.600" },
+      { storeId: "665f1c2e8a4b3c0012ab3401", quantity: 12 },
+    ],
+  },
 };
 
 export const serviceExample = {
@@ -325,6 +350,7 @@ registry.registerPath({
           schema: createProductSchema,
           examples: {
             single: { summary: "Single item", value: singleExample },
+            singleWithStock: { summary: "Single item with opening stock (Phase 2 preview)", value: singleWithOpeningStockExample },
             variant: { summary: "Variant item (Size × Colour)", value: variantExample },
             service: { summary: "Service", value: serviceExample },
           },
@@ -359,6 +385,8 @@ registry.registerPath({
     "- **Services** cannot be given a `brand`, `manufacturer`, `inventory.trackInventory: true` or an `inventory.reorderPoint` (400 `VALIDATION_FAILED`).",
     "- Changing `taxPreference` away from `standard` clears `taxRateId`; sending a `taxRateId` together with a non-standard preference is refused (400 `VALIDATION_FAILED`), also when `taxPreference` is omitted and the stored one is non-standard. Switching to `standard`, or sending `taxRateId: null` on a standard product, falls back to the organization's default rate (`TAX_RATE_REQUIRED` if there is none).",
     "- Changing `unit` to a whole-number unit (e.g. kg → pcs) is refused while any variant has a fractional `reorderPoint`.",
+    `- Once any variant has stock movements, \`unit\` cannot change at all (\`UNIT_LOCKED\`, 409), and \`inventory.trackInventory\` cannot be turned off while any store holds non-zero stock (\`STOCK_ON_HAND\`, 409). ${STOCK_PREVIEW}`,
+    "- `inventory.openingStock` is refused on update (400 `VALIDATION_FAILED`): use a stock adjustment.",
     "- An update made only of empty groups (e.g. `{ \"sales\": {} }`) is refused: send at least one actual value.",
     "- A change to a single item's selling or cost price is recorded in the audit log (`product.price_changed`, with the before/after prices).",
     "- The response is the whole product with all variants.",
@@ -410,7 +438,7 @@ registry.registerPath({
   path: `${base}/{productId}`,
   tags,
   summary: "Delete a product",
-  description: `${writeNote("product:delete")}\n\nSoft delete of the product and all its variants; their SKUs and barcodes become reusable, and the product no longer counts toward its category's \`productCount\`, the tax rate's in-use check or the organization's currency lock. Currently a product can always be deleted: \`PRODUCT_IN_USE\` (409) is reserved for later phases (once stock or documents reference it) and is **not returned yet**.`,
+  description: `${writeNote("product:delete")}\n\nSoft delete of the product and all its variants; their SKUs and barcodes become reusable, and the product no longer counts toward its category's \`productCount\`, the tax rate's in-use check or the organization's currency lock. A product whose variants have any stock movement cannot be deleted (\`PRODUCT_IN_USE\`, 409); deactivate it instead. ${STOCK_PREVIEW} Until then a product can always be deleted.`,
   security,
   request: { params: productIdParam },
   responses: {
@@ -422,7 +450,7 @@ registry.registerPath({
     401: TENANT_AUTH_401,
     403: write403,
     404: productNotFound,
-    409: errorResponse("**Reserved, not returned yet.** Will be returned once stock or documents reference the product. Code `PRODUCT_IN_USE`.", "This product has been used and can only be deactivated.", 409, "PRODUCT_IN_USE"),
+    409: errorResponse(`A variant of the product has stock movements. Code \`PRODUCT_IN_USE\`. ${STOCK_PREVIEW}`, "This product has been used and can only be deactivated.", 409, "PRODUCT_IN_USE"),
     500: server500,
   },
 });
@@ -432,7 +460,7 @@ registry.registerPath({
   path: `${base}/{productId}/variants`,
   tags,
   summary: "Add a variant",
-  description: `${writeNote("product:update")}\n\nVariant items only (\`PRODUCT_NOT_VARIANT_ITEM\`, 400 otherwise). \`attributeValues\` must use existing options - add new options first with PATCH /products/{productId} \`attributes\`. A combination that already exists returns \`VARIANT_COMBINATION_TAKEN\` (409). Returns the whole product.`,
+  description: `${writeNote("product:update")}\n\nVariant items only (\`PRODUCT_NOT_VARIANT_ITEM\`, 400 otherwise). \`attributeValues\` must use existing options - add new options first with PATCH /products/{productId} \`attributes\`. A combination that already exists returns \`VARIANT_COMBINATION_TAKEN\` (409). \`openingStock\` follows the same rules as on product create ${STOCK_PREVIEW.replace("returned", "accepted")}. Returns the whole product.`,
   security,
   request: { params: productIdParam, body: { required: true, content: json(createVariantSchema) } },
   responses: {
@@ -510,7 +538,7 @@ registry.registerPath({
   path: `${base}/{productId}/variants/{variantId}`,
   tags,
   summary: "Delete a variant",
-  description: `${writeNote("product:update")}\n\nVariant items only (\`PRODUCT_NOT_VARIANT_ITEM\`, 400 otherwise). Soft delete; its SKU and barcodes become reusable. The last active variant cannot be deleted (\`LAST_ACTIVE_VARIANT\`, 409); an inactive variant can always be deleted. \`VARIANT_IN_USE\` (409) is reserved for later phases and is **not returned yet**. Returns the whole product.`,
+  description: `${writeNote("product:update")}\n\nVariant items only (\`PRODUCT_NOT_VARIANT_ITEM\`, 400 otherwise). Soft delete; its SKU and barcodes become reusable. The last active variant cannot be deleted (\`LAST_ACTIVE_VARIANT\`, 409); an inactive variant can be deleted unless it is in use. A variant with stock movements cannot be deleted (\`VARIANT_IN_USE\`, 409); deactivate it instead. ${STOCK_PREVIEW} Returns the whole product.`,
   security,
   request: { params: variantParams },
   responses: {
@@ -526,7 +554,7 @@ registry.registerPath({
       [
         "Conflict. Codes:",
         "- `LAST_ACTIVE_VARIANT`: the variant is the product's only active one; deactivate the product instead.",
-        "- `VARIANT_IN_USE`: **reserved, not returned yet.** Will mean the variant has stock or appears on documents; deactivate it instead.",
+        `- \`VARIANT_IN_USE\`: the variant has stock movements; deactivate it instead. ${STOCK_PREVIEW}`,
       ].join("\n"),
       "A product must keep at least one active variant. Deactivate the product instead.",
       409,

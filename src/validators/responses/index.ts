@@ -41,7 +41,7 @@ export const ErrorResponseSchema = z
     }),
     code: z.string().optional().openapi({
       description:
-        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE` (`PRODUCT_IN_USE` and `VARIANT_IN_USE` are reserved for later phases and are not returned yet). Most older errors (401/403, plain 404/409) carry no code.",
+        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE`, `PRODUCT_IN_USE`, `VARIANT_IN_USE`, and the stock codes `STORE_NOT_FOUND`, `STORE_INACTIVE`, `VARIANT_NOT_STOCKED`, `INSUFFICIENT_STOCK`, `UNIT_LOCKED`, `STOCK_ON_HAND`, `ADJUSTMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS` (`PRODUCT_IN_USE`, `VARIANT_IN_USE` and the stock codes arrive with stock tracking). Most older errors (401/403, plain 404/409) carry no code.",
       example: "TAX_RATE_NAME_TAKEN",
     }),
     requestId: z.string().uuid().openapi({
@@ -163,7 +163,7 @@ export const OrganizationSchema = z
       inventory: z
         .object({
           allowNegativeStock: z.boolean().openapi({
-            description: "Whether sales/adjustments may take stock below zero.",
+            description: "Whether sales and stock adjustments may take stock below zero. Stock transfers always need enough stock at the source store, whatever this setting says.",
             example: false,
           }),
         })
@@ -532,8 +532,17 @@ export const ProductVariantSchema = z
     sku: z.string().nullable().openapi({ example: "TSHIRT-RED-M" }),
     barcodes: ProductBarcodesSchema,
     sellingPrice: money("4.500", "VAT-inclusive when the organization's pricesIncludeTax is true."),
-    costPrice: money("2.750", "VAT-exclusive.").nullable(),
+    costPrice: money(
+      "2.750",
+      "VAT-exclusive. Once stock tracking ships, null for callers without `inventory:read` or a product write permission (e.g. cashiers)."
+    ).nullable(),
     reorderPoint: z.number().nullable().openapi({ example: 10 }),
+    // Optional only until the stock ledger ships (Phase 2 implementation); then always present.
+    stockOnHand: z.number().nullable().optional().openapi({
+      description:
+        "Quantity on hand across all stores of the organization. null when the product does not track inventory. Per-store figures: GET /products/{productId}/stock. Returned once stock tracking ships.",
+      example: 42,
+    }),
     isDefault: z.boolean().openapi({
       description: "true only for the single hidden variant of a single item.",
       example: false,
@@ -574,6 +583,11 @@ export const ProductSummarySchema = z
     ...productCore,
     sku: z.string().nullable().openapi({ description: "Single items only (null for variant items).", example: null as unknown as string }),
     variantCount: z.number().int().openapi({ description: "Active variants.", example: 6 }),
+    // Optional only until the stock ledger ships (Phase 2 implementation); then always present.
+    stockOnHand: z.number().nullable().optional().openapi({
+      description: "Quantity on hand across all stores and active variants. null when the product does not track inventory. Returned once stock tracking ships.",
+      example: 42,
+    }),
     updatedAt: isoDate("2026-10-13T09:00:00.000Z"),
   })
   .openapi("ProductSummary");
@@ -640,3 +654,248 @@ export const ProductLookupDataSchema = z
     matchedOn: z.enum(["sku", "upc", "ean", "isbn"]).openapi({ example: "ean" }),
   })
   .openapi("ProductLookupData");
+
+// ---------- Stock (Phase 2) ----------
+
+const quantity = (example: number, description?: string) => z.number().openapi({ description, example });
+
+const StockStoreRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3400"),
+    name: z.string().openapi({ example: "Seef Mall" }),
+    code: z.string().openapi({ example: "SEEF-01" }),
+  })
+  .openapi("StockStoreRef");
+
+const StockVariantRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3801"),
+    name: z.string().openapi({ description: "Product name plus attribute values.", example: "Crew-neck T-shirt - M / Red" }),
+    sku: z.string().nullable().openapi({ example: "TSHIRT-RED-M" }),
+  })
+  .openapi("StockVariantRef");
+
+const StockProductRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3800"),
+    name: z.string().openapi({ example: "Crew-neck T-shirt" }),
+    unit: z.string().openapi({ example: "pcs" }),
+  })
+  .openapi("StockProductRef");
+
+const StockUserRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3500"),
+    name: z.string().openapi({ example: "Fatima Al Khalifa" }),
+  })
+  .nullable()
+  .openapi("StockUserRef", { description: "Who made the change; null for system-generated movements." });
+
+// Response enums that later phases will grow are plain strings, so generated client types and
+// exhaustive switches do not break when a value is added.
+const REASON_LIST =
+  "`damaged`, `expired`, `theft_loss`, `found`, `count_correction`, `opening_balance` or `other`";
+
+const COST_HIDDEN = "null when the caller lacks `inventory:read`.";
+
+/** One variant's stock in one store. */
+export const StockLevelSchema = z
+  .object({
+    variant: StockVariantRefSchema.extend({ isActive: z.boolean().openapi({ example: true }) }),
+    product: StockProductRefSchema.extend({
+      isActive: z.boolean().openapi({ example: true }),
+      category: z
+        .object({
+          id: objectId("665f1c2e8a4b3c0012ab3700"),
+          name: z.string().openapi({ example: "T-shirts" }),
+          path: z.string().openapi({ example: "Apparel › T-shirts" }),
+        })
+        .nullable(),
+    }),
+    quantity: quantity(18, "On hand in this store. Negative only when the organization allows negative stock."),
+    reorderPoint: z.number().nullable().openapi({ example: 10 }),
+    isLow: z.boolean().openapi({ description: "true when a reorder point is set and quantity is at or below it.", example: false }),
+    averageCost: money(
+      "1.600",
+      `Weighted average cost per unit in this store, VAT-exclusive. null until the variant has received stock here, and ${COST_HIDDEN}`
+    ).nullable(),
+    stockValue: money("28.800", `quantity × averageCost (0 when quantity is 0 or negative); ${COST_HIDDEN}`).nullable(),
+    lastMovementAt: isoDate("2026-10-17T08:15:00.000Z").nullable().openapi({
+      description: "null when the variant has never had stock in this store (it is still listed, with quantity 0).",
+    }),
+  })
+  .openapi("StockLevel");
+
+export const StockLevelListDataSchema = z
+  .object({
+    store: StockStoreRefSchema,
+    items: z.array(StockLevelSchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("StockLevelListData");
+
+export const ProductStockDataSchema = z
+  .object({
+    product: StockProductRefSchema.extend({
+      trackInventory: z.boolean().openapi({ example: true }),
+    }),
+    variants: z.array(
+      z.object({
+        variant: StockVariantRefSchema.extend({ isActive: z.boolean().openapi({ example: true }) }),
+        totalQuantity: quantity(42, "Sum over the stores listed below."),
+        stores: z
+          .array(
+            z.object({
+              store: StockStoreRefSchema,
+              quantity: quantity(18),
+              averageCost: money("1.600", `null until stock is received here, and ${COST_HIDDEN}`).nullable(),
+              stockValue: money("28.800", COST_HIDDEN).nullable(),
+            })
+          )
+          .openapi({
+            description: "Every active store the caller can access, including stores with no stock of this variant (quantity 0).",
+          }),
+      })
+    ),
+  })
+  .openapi("ProductStockData");
+
+export const StockMovementSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3900"),
+    store: StockStoreRefSchema,
+    variant: StockVariantRefSchema,
+    product: StockProductRefSchema,
+    type: z.string().openapi({
+      description:
+        "`opening`, `adjustment`, `transfer_out` or `transfer_in` in Phase 2. Purchases and sales will add `purchase`, `purchase_return`, `sale` and `sale_return`: show unknown types as they are rather than failing.",
+      example: "adjustment",
+    }),
+    quantityChange: quantity(-2, "Signed: positive adds stock, negative removes it."),
+    quantityAfter: quantity(16, "Stock in this store right after this movement."),
+    unitCost: money("1.600", "Cost per unit used for this movement, VAT-exclusive."),
+    valueChange: money("-3.200", "quantityChange × unitCost; negative when stock is removed."),
+    source: z
+      .object({
+        type: z.string().openapi({
+          description:
+            "`product` (opening stock entered when the product or variant was created), `adjustment` or `transfer` in Phase 2. Purchases and sales will add more: show unknown values as they are.",
+          example: "adjustment",
+        }),
+        id: objectId("665f1c2e8a4b3c0012ab3a00", "The id of the source record."),
+        number: z.string().nullable().openapi({
+          description:
+            "The source document's number for display (e.g. an invoice number), when it has one. null for product opening stock, and for adjustments and transfers until they get document numbers.",
+          example: null as unknown as string,
+        }),
+      })
+      .openapi({ description: "The record that caused this movement." }),
+    reason: z.string().nullable().openapi({
+      description: `Adjustments only: ${REASON_LIST}. More may be added: show unknown values as they are.`,
+      example: "damaged",
+    }),
+    note: z.string().nullable().openapi({ example: "Carton dropped in the stockroom." }),
+    createdBy: StockUserRefSchema,
+    createdAt: isoDate("2026-10-17T08:15:00.000Z"),
+  })
+  .openapi("StockMovement");
+
+export const StockMovementListDataSchema = z
+  .object({
+    movements: z.array(StockMovementSchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("StockMovementListData");
+
+const adjustmentCore = {
+  id: objectId("665f1c2e8a4b3c0012ab3a00"),
+  store: StockStoreRefSchema,
+  reason: z.string().openapi({
+    description: `${REASON_LIST}. More may be added: show unknown values as they are.`,
+    example: "damaged",
+  }),
+  note: z.string().nullable().openapi({ example: "Carton dropped in the stockroom." }),
+  valueChange: money("-3.200", "Sum of the lines' valueChange."),
+  createdBy: StockUserRefSchema,
+  createdAt: isoDate("2026-10-17T08:15:00.000Z"),
+};
+
+export const StockAdjustmentSummarySchema = z
+  .object({
+    ...adjustmentCore,
+    lineCount: z.number().int().openapi({ example: 3 }),
+  })
+  .openapi("StockAdjustmentSummary");
+
+export const StockAdjustmentSchema = z
+  .object({
+    ...adjustmentCore,
+    lines: z.array(
+      z.object({
+        variant: StockVariantRefSchema,
+        product: StockProductRefSchema,
+        mode: z.enum(["change", "count"]).openapi({
+          description: "`change`: quantityChange was sent. `count`: countedQuantity was sent.",
+          example: "change",
+        }),
+        countedQuantity: z.number().nullable().openapi({ description: "Count mode only.", example: null as unknown as number }),
+        quantityBefore: quantity(18),
+        quantityChange: quantity(-2, "0 when a count matched the stock (no movement is written for that line)."),
+        quantityAfter: quantity(16),
+        unitCost: money("1.600"),
+        valueChange: money("-3.200"),
+      })
+    ),
+  })
+  .openapi("StockAdjustment");
+
+export const StockAdjustmentDataSchema = z.object({ adjustment: StockAdjustmentSchema }).openapi("StockAdjustmentData");
+
+export const StockAdjustmentListDataSchema = z
+  .object({
+    adjustments: z.array(StockAdjustmentSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("StockAdjustmentListData");
+
+const transferCore = {
+  id: objectId("665f1c2e8a4b3c0012ab3b00"),
+  fromStore: StockStoreRefSchema,
+  toStore: StockStoreRefSchema,
+  note: z.string().nullable().openapi({ example: "Weekend restock for the mall branch." }),
+  totalValue: money("9.600", "Sum of quantity × unitCost over the lines."),
+  createdBy: StockUserRefSchema,
+  createdAt: isoDate("2026-10-17T08:15:00.000Z"),
+};
+
+export const StockTransferSummarySchema = z
+  .object({
+    ...transferCore,
+    lineCount: z.number().int().openapi({ example: 2 }),
+  })
+  .openapi("StockTransferSummary");
+
+export const StockTransferSchema = z
+  .object({
+    ...transferCore,
+    lines: z.array(
+      z.object({
+        variant: StockVariantRefSchema,
+        product: StockProductRefSchema,
+        quantity: quantity(6),
+        unitCost: money("1.600", "The source store's average cost at the time of the transfer."),
+        fromQuantityAfter: quantity(12, "Source store stock right after the transfer."),
+        toQuantityAfter: quantity(30, "Destination store stock right after the transfer."),
+      })
+    ),
+  })
+  .openapi("StockTransfer");
+
+export const StockTransferDataSchema = z.object({ transfer: StockTransferSchema }).openapi("StockTransferData");
+
+export const StockTransferListDataSchema = z
+  .object({
+    transfers: z.array(StockTransferSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("StockTransferListData");
