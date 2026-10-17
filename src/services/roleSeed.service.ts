@@ -40,6 +40,7 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "sale:void",
       "sale:refund",
       "product:read",
+      "inventory:read",
       "inventory:adjust",
       "report:view_store",
       "store:configure",
@@ -59,13 +60,14 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
     slug: "accountant",
     name: "Accountant",
     scope: "organization",
-    permissions: ["report:view_org", "report:view_store", "sale:refund", "tax:manage"],
+    // product:read + inventory:read: stock valuation and the stock ledger.
+    permissions: ["report:view_org", "report:view_store", "sale:refund", "tax:manage", "product:read", "inventory:read"],
   },
   {
     slug: "inventory_clerk",
     name: "Inventory Clerk",
     scope: "store",
-    permissions: ["product:read", "inventory:adjust"],
+    permissions: ["product:read", "inventory:read", "inventory:adjust"],
   },
 ];
 

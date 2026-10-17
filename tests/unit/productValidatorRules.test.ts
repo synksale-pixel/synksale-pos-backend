@@ -378,7 +378,7 @@ describe("attributes and variants (create)", () => {
 
   it("variants must be a non-empty array of strict objects with a price", () => {
     expectRejected(variantItem({ variants: [] }), "variants");
-    expectRejected(oneVariant({ openingStock: 3 }), "Opening stock is not accepted yet");
+    expectRejected(oneVariant({ openingStock: 3 }), "variants.0.openingStock: Expected array");
     expectRejected(variantItem({ variants: [{ attributeValues: { Size: "S", Colour: "Red" } }] }), "variants.0.sellingPrice");
   });
 

@@ -12,5 +12,6 @@ import "./organization.openapi";
 import "./taxRate.openapi";
 import "./category.openapi";
 import "./product.openapi";
+import "./stock.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";

@@ -682,7 +682,19 @@ export async function lookupProduct(organizationId: string, code: string) {
 // Create
 // ==========================================
 
+/**
+ * The Phase 2 contract accepts opening stock, but the stock ledger is not built yet. Refuse it
+ * rather than silently dropping it. Remove when the ledger lands.
+ */
+function refuseOpeningStockUntilLedger(lines: unknown, field: string) {
+  if (lines !== undefined) {
+    throw validationError(field, "Opening stock is not available yet; it arrives with stock tracking.");
+  }
+}
+
 export async function createProduct(organizationId: string, input: CreateProductInput, actorUserId: string) {
+  refuseOpeningStockUntilLedger(input.inventory?.openingStock, "inventory.openingStock");
+  input.variants?.forEach((variant, index) => refuseOpeningStockUntilLedger(variant.openingStock, `variants[${index}].openingStock`));
   const decimals = await currencyDecimals(organizationId);
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
@@ -990,6 +1002,7 @@ async function findVariantItemOrThrow(organizationId: string, productId: string)
 
 /** Adds a variant to a variant item, using the product's existing attribute options. */
 export async function addVariant(organizationId: string, productId: string, input: VariantInput, actorUserId: string) {
+  refuseOpeningStockUntilLedger(input.openingStock, "openingStock");
   const product = await findVariantItemOrThrow(organizationId, productId);
   const decimals = await currencyDecimals(organizationId);
   const paths = variantPaths("");
