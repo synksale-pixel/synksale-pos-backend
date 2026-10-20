@@ -8,6 +8,7 @@ import { Request, Response } from "express";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/ApiResponse";
 import { resolveOrganizationId as resolveOrgId } from "../utils/requestOrganization";
+import { getPermissionsAcrossStores } from "../services/permission.service";
 import {
   listProducts,
   lookupProduct,
@@ -48,13 +49,24 @@ export const list = asyncHandler(async (req: Request, res: Response) => {
   res.status(200).json(new ApiResponse(200, result, "Products fetched successfully."));
 });
 
+/**
+ * Cost prices are shown to callers who see stock costs (inventory:read) or edit the catalog,
+ * wherever they hold that permission; cashiers get null.
+ */
+const COST_PERMISSIONS = ["*", "inventory:read", "product:create", "product:update", "product:delete"];
+
+async function viewOptions(req: Request) {
+  const permissions = await getPermissionsAcrossStores(req.user!);
+  return { showCost: permissions.some((permission) => COST_PERMISSIONS.includes(permission)) };
+}
+
 export const lookup = asyncHandler(async (req: Request, res: Response) => {
-  const result = await lookupProduct(resolveOrganizationId(req), queryString(req.query.code) ?? "");
+  const result = await lookupProduct(resolveOrganizationId(req), queryString(req.query.code) ?? "", await viewOptions(req));
   res.status(200).json(new ApiResponse(200, result, "Product found."));
 });
 
 export const getOne = asyncHandler(async (req: Request, res: Response) => {
-  const product = await getProduct(resolveOrganizationId(req), req.params.productId as string);
+  const product = await getProduct(resolveOrganizationId(req), req.params.productId as string, await viewOptions(req));
   res.status(200).json(new ApiResponse(200, { product }, "Product fetched successfully."));
 });
 

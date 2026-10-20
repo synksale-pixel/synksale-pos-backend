@@ -1,6 +1,6 @@
 /**
- * Purpose: Phase 2 stock contract wiring that the validator unit tests cannot see: the opening
- * stock guard on add-variant and on variant items, the inventory:read role seeding and sync, the
+ * Purpose: Phase 2 stock wiring that the validator unit tests cannot see: opening stock store
+ * checks on add-variant and on variant items, the inventory:read role seeding and sync, the
  * accountant's catalog access, the privilege ceiling for the new key, and the Swagger document.
  */
 
@@ -77,24 +77,24 @@ beforeEach(async () => {
 
 const openingFor = () => [{ storeId: new mongoose.Types.ObjectId().toString(), quantity: 2 }];
 
-describe("opening stock is refused, not dropped, until the ledger ships", () => {
+describe("opening stock referring to an unknown store is refused before anything is written", () => {
   const createVariantItem = (patch?: (variants: Record<string, unknown>[]) => void) => {
     const variants = JSON.parse(JSON.stringify((variantExample as any).variants)) as Record<string, unknown>[];
     patch?.(variants);
     return request.post(PRODUCTS).set(auth(admin)).send({ ...variantExample, categoryId, taxRateId: undefined, variants });
   };
 
-  it("refuses variants[i].openingStock on create with the field path and persists nothing", async () => {
+  it("refuses variants[i].openingStock with an unknown store, naming the field, and persists nothing", async () => {
     const res = await createVariantItem((v) => {
       v[1].openingStock = openingFor();
     });
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe("VALIDATION_FAILED");
-    expect(res.body.errors[0]).toMatchObject({ field: "variants[1].openingStock", code: "VALIDATION_FAILED" });
+    expect(res.body.code).toBe("STORE_NOT_FOUND");
+    expect(res.body.errors[0]).toMatchObject({ field: "variants[1].openingStock[0].storeId", code: "STORE_NOT_FOUND" });
     expect(await Product.countDocuments({})).toBe(0);
   });
 
-  it("refuses openingStock on add-variant and leaves the product unchanged", async () => {
+  it("refuses add-variant opening stock with an unknown store and leaves the product unchanged", async () => {
     const created = await createVariantItem();
     expect(created.status).toBe(201);
     const product = created.body.data.product;
@@ -105,7 +105,7 @@ describe("opening stock is refused, not dropped, until the ledger ships", () => 
       .set(auth(admin))
       .send({ attributeValues: { Size: "S", Colour: "Blue" }, sellingPrice: "4.000", openingStock: openingFor() });
     expect(res.status).toBe(400);
-    expect(res.body.errors[0]).toMatchObject({ field: "openingStock", code: "VALIDATION_FAILED" });
+    expect(res.body.errors[0]).toMatchObject({ field: "openingStock[0].storeId", code: "STORE_NOT_FOUND" });
 
     const after = await request.get(`${PRODUCTS}/${product._id}`).set(auth(admin));
     expect(after.body.data.product.variants).toHaveLength(before);
@@ -121,8 +121,8 @@ describe("opening stock is refused, not dropped, until the ledger ships", () => 
   });
 });
 
-describe("stock endpoints are not implemented yet", () => {
-  it("returns 404 without leaking internals", async () => {
+describe("store stock routes", () => {
+  it("return 404 for a store outside the organization without leaking internals", async () => {
     const id = new mongoose.Types.ObjectId().toString();
     const res = await request.get(`/api/v1/stores/${id}/stock`).set(auth(admin));
     expect(res.status).toBe(404);

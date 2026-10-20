@@ -32,6 +32,11 @@ import { TaxRate } from "../src/models/taxRate.model";
 import { Category } from "../src/models/category.model";
 import { Product } from "../src/models/product.model";
 import { ProductVariant } from "../src/models/productVariant.model";
+import { StockLevel } from "../src/models/stockLevel.model";
+import { StockMovement } from "../src/models/stockMovement.model";
+import { StockAdjustment } from "../src/models/stockAdjustment.model";
+import { StockTransfer } from "../src/models/stockTransfer.model";
+import { IdempotencyKey } from "../src/models/idempotencyKey.model";
 
 const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
   Organization,
@@ -43,6 +48,11 @@ const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslin
   Category,
   Product,
   ProductVariant,
+  StockLevel,
+  StockMovement,
+  StockAdjustment,
+  StockTransfer,
+  IdempotencyKey,
 ];
 
 async function run() {

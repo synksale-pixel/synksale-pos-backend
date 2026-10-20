@@ -161,6 +161,21 @@ export function deriveScanCodes(barcodes: Partial<IProductBarcodes> | null | und
   return [...new Set(codes)];
 }
 
+/**
+ * A variant's display name: the product name plus its attribute values in the product's
+ * attribute order ("Crew-neck T-shirt - M / Red"), or just the product name for a single item.
+ * Accepts the Map a document holds or the plain object an aggregate returns.
+ */
+export function variantDisplayName(
+  product: { name: string; attributes?: { name: string }[] },
+  attributeValues: Map<string, string> | Record<string, string> | null | undefined
+): string {
+  const valueOf = (name: string) =>
+    attributeValues instanceof Map ? attributeValues.get(name) : attributeValues?.[name];
+  const parts = (product.attributes ?? []).map((attribute) => valueOf(attribute.name)).filter(Boolean);
+  return parts.length > 0 ? `${product.name} - ${parts.join(" / ")}` : product.name;
+}
+
 /** Loads a product's variants in creation order. */
 productVariantSchema.index({ organizationId: 1, productId: 1 });
 

@@ -1041,3 +1041,76 @@ role privilege ceiling for `inventory:read`; the OpenAPI document lists the Inve
 strict-mode injection, notes, reasons, the idempotency key format). No source bugs found. The
 "returns 404" and opening-stock refusal tests are in their own `describe` blocks, to be flipped
 when the ledger ships. 684 tests pass.
+
+---
+
+## 📦 Stock — Phase 2 implementation
+
+The Inventory endpoints are live behind the contract above; the "contract preview" notes are
+gone from Swagger, and product create / add-variant now accept opening stock.
+
+- **Models.** `StockMovement` (the ledger: append-only, the model refuses update and delete
+  queries), `StockLevel` (one row per store and variant, a projection updated in the same
+  transaction as each movement), `StockAdjustment`, `StockTransfer` and `IdempotencyKey`. Ledger
+  models use `softDelete: false`. Quantities are stored in thousandths (`utils/quantity.ts`),
+  money in minor units.
+- **Engine** (`stockLedger.service.ts`): `applyMovement` is the only code that changes stock.
+  Weighted average per store: a level keeps its total value rather than a rounded average, so
+  receipts do not drift; removing stock uses the exact average and emptying it removes the exact
+  remaining value; at 0 or below the level is worth 0 and the last average is kept.
+- **Concurrency.** Changes read the level inside the transaction; two transactions writing the
+  same level conflict and the loser is retried with fresh reads, so the last unit can never be
+  removed twice and no addition is lost. Two first-ever movements racing to insert a level row
+  are retried on the unique index.
+- **Idempotency.** The key's record is inserted in the same transaction as the change: a crash
+  rolls both back, and concurrent requests with one key conflict on that row, so exactly one
+  applies and the others replay it. The fingerprint covers user, method, path and body. Records
+  expire after 24 hours (TTL index).
+- **Opening stock** is validated (active stores, units, costs) before the product transaction
+  and written as `opening` movements inside it.
+- **Catalog locks:** `PRODUCT_IN_USE`, `VARIANT_IN_USE`, `UNIT_LOCKED` and `STOCK_ON_HAND` are
+  live. Product responses carry `stockOnHand` (active stores only); `costPrice` is null for
+  callers without `inventory:read` or a product write permission.
+- **Dates:** `utils/dateRange.ts` reads bare `from` / `to` dates in the organization's timezone.
+- `opening_balance` counts below the current stock are refused (400), since that reason only
+  adds stock.
+
+### Deploy note
+
+Run `npm run migrate`: it creates the indexes of the five new collections (including the TTL
+index on idempotency keys) and gives existing roles `inventory:read`.
+
+Testing: `tests/integration/stockLedger.test.ts` (28 tests over HTTP: opening stock, locks,
+adjustments in both modes, reasons, negative stock, weighted average, transfers, idempotent
+retries including concurrent ones, concurrent removals and additions, permissions and cost
+visibility, history filters, the ledger invariant) and `tests/unit/stockMath.test.ts` (costing
+and timezone date math). The Phase 2 contract tests that expected the interim refusal now check
+the real store validation. 726 tests pass.
+
+### pos-tester review
+
+Found three inputs that returned 500, all fixed:
+
+- An upper-case store id in the URL: `scopeToStore` put it into the request context as-is and
+  the tenant plugin, which compares ids as strings, saw a mismatch. The context id is now
+  lower-cased (this also covers the older `/stores/:storeId` routes).
+- An absurd `?page=` (1e30, Infinity) overflowed the MongoDB skip on **every** list endpoint;
+  `resolvePaging` now caps the page at 1,000,000.
+- `?status=constructor` (an inherited object key) reached `$match`; status and reason lookups
+  now use `Object.hasOwn`.
+
+Design changes approved after the review (2026-10-20):
+
+- The adjustment POST response no longer shows costs (`unitCost`, `valueChange`) to a caller
+  without `inventory:read` for the store, matching every read endpoint.
+- `GET /stock-transfers/{id}` returns 404 `TRANSFER_NOT_FOUND` for a transfer the caller may not
+  see, as for one that does not exist, so ids cannot be probed.
+- A transfer may take stock **out of a deactivated store** (only the destination must be
+  active), so closing a branch no longer strands its stock or blocks switching tracking off.
+
+Reviewed and holding: cross-tenant and cross-store isolation, idempotent replays (per store, per
+user, byte-identical, failures never stored), races between transfers and adjustments, a
+5000-step random run of the costing invariants, and every response against its Zod schema.
+`IDEMPOTENCY_IN_PROGRESS` is practically unreachable (concurrent duplicates conflict and
+replay). New: `tests/integration/stockLedgerReview.test.ts` (69 tests) and
+`tests/unit/stockMathEdgeCases.test.ts` (14). 810 tests pass.

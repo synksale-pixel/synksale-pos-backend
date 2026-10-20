@@ -41,7 +41,7 @@ export const ErrorResponseSchema = z
     }),
     code: z.string().optional().openapi({
       description:
-        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE`, `PRODUCT_IN_USE`, `VARIANT_IN_USE`, and the stock codes `STORE_NOT_FOUND`, `STORE_INACTIVE`, `VARIANT_NOT_STOCKED`, `INSUFFICIENT_STOCK`, `UNIT_LOCKED`, `STOCK_ON_HAND`, `ADJUSTMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS` (`PRODUCT_IN_USE`, `VARIANT_IN_USE` and the stock codes arrive with stock tracking). Most older errors (401/403, plain 404/409) carry no code.",
+        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE`, `PRODUCT_IN_USE`, `VARIANT_IN_USE`, and the stock codes `STORE_NOT_FOUND`, `STORE_INACTIVE`, `VARIANT_NOT_STOCKED`, `INSUFFICIENT_STOCK`, `UNIT_LOCKED`, `STOCK_ON_HAND`, `ADJUSTMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS`. Most older errors (401/403, plain 404/409) carry no code.",
       example: "TAX_RATE_NAME_TAKEN",
     }),
     requestId: z.string().uuid().openapi({
@@ -534,13 +534,12 @@ export const ProductVariantSchema = z
     sellingPrice: money("4.500", "VAT-inclusive when the organization's pricesIncludeTax is true."),
     costPrice: money(
       "2.750",
-      "VAT-exclusive. Once stock tracking ships, null for callers without `inventory:read` or a product write permission (e.g. cashiers)."
+      "VAT-exclusive. null when the variant has no cost price, and for callers who hold neither `inventory:read` nor a product create/update/delete permission (e.g. cashiers): treat null as not visible, not as no cost."
     ).nullable(),
     reorderPoint: z.number().nullable().openapi({ example: 10 }),
-    // Optional only until the stock ledger ships (Phase 2 implementation); then always present.
-    stockOnHand: z.number().nullable().optional().openapi({
+    stockOnHand: z.number().nullable().openapi({
       description:
-        "Quantity on hand across all stores of the organization. null when the product does not track inventory. Per-store figures: GET /products/{productId}/stock. Returned once stock tracking ships.",
+        "Quantity on hand across the organization's active stores (stock in deactivated stores is left out). Always present; null when the product does not track inventory. Per-store figures: GET /products/{productId}/stock.",
       example: 42,
     }),
     isDefault: z.boolean().openapi({
@@ -583,9 +582,8 @@ export const ProductSummarySchema = z
     ...productCore,
     sku: z.string().nullable().openapi({ description: "Single items only (null for variant items).", example: null as unknown as string }),
     variantCount: z.number().int().openapi({ description: "Active variants.", example: 6 }),
-    // Optional only until the stock ledger ships (Phase 2 implementation); then always present.
-    stockOnHand: z.number().nullable().optional().openapi({
-      description: "Quantity on hand across all stores and active variants. null when the product does not track inventory. Returned once stock tracking ships.",
+    stockOnHand: z.number().nullable().openapi({
+      description: "Quantity on hand across the organization's active stores and the product's active variants. Always present; null when the product does not track inventory.",
       example: 42,
     }),
     updatedAt: isoDate("2026-10-13T09:00:00.000Z"),
@@ -815,7 +813,7 @@ const adjustmentCore = {
     example: "damaged",
   }),
   note: z.string().nullable().openapi({ example: "Carton dropped in the stockroom." }),
-  valueChange: money("-3.200", "Sum of the lines' valueChange."),
+  valueChange: money("-3.200", `Sum of the lines' valueChange; ${COST_HIDDEN}`).nullable(),
   createdBy: StockUserRefSchema,
   createdAt: isoDate("2026-10-17T08:15:00.000Z"),
 };
@@ -842,8 +840,8 @@ export const StockAdjustmentSchema = z
         quantityBefore: quantity(18),
         quantityChange: quantity(-2, "0 when a count matched the stock (no movement is written for that line)."),
         quantityAfter: quantity(16),
-        unitCost: money("1.600"),
-        valueChange: money("-3.200"),
+        unitCost: money("1.600", COST_HIDDEN).nullable(),
+        valueChange: money("-3.200", COST_HIDDEN).nullable(),
       })
     ),
   })

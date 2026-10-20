@@ -20,6 +20,7 @@ import {
   ProductVariant,
   ProductVariantDocument,
   deriveScanCodes,
+  variantDisplayName,
 } from "../models/productVariant.model";
 import { TaxRate } from "../models/taxRate.model";
 import { ApiError, ApiErrorDetail } from "../utils/ApiError";
@@ -31,6 +32,15 @@ import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
 import { assertCategoryExists, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
 import { recordAudit } from "./audit.service";
+import {
+  prepareOpeningStock,
+  recordOpeningStock,
+  hasStockMovements,
+  hasStockOnHand,
+  stockOnHandByVariant,
+  PreparedOpeningLine,
+} from "./stock.service";
+import { fromMilli } from "../utils/quantity";
 import type {
   CreateProductInput,
   UpdateProductInput,
@@ -448,17 +458,31 @@ async function inTransaction(work: (session: mongoose.ClientSession) => Promise<
 
 type TaxRateRef = { id: mongoose.Types.ObjectId; name: string; rate: number } | null;
 
-function variantName(product: ProductDocument, values: Map<string, string>): string {
-  const parts = product.attributes.map((attribute) => values.get(attribute.name)).filter(Boolean);
-  return parts.length > 0 ? `${product.name} - ${parts.join(" / ")}` : product.name;
+/** What a response may show the caller. */
+export interface ViewOptions {
+  /** Cost prices; false for callers without inventory:read or a product write permission. */
+  showCost: boolean;
 }
 
-function toVariantView(product: ProductDocument, variant: ProductVariantDocument, decimals: number) {
+const FULL_VIEW: ViewOptions = { showCost: true };
+
+/** Quantity on hand across active stores, or null when the product does not track inventory. */
+function onHand(product: ProductDocument, variantId: mongoose.Types.ObjectId, stock: Map<string, number>): number | null {
+  return product.inventory.trackInventory ? fromMilli(stock.get(variantId.toString()) ?? 0) : null;
+}
+
+function toVariantView(
+  product: ProductDocument,
+  variant: ProductVariantDocument,
+  decimals: number,
+  stock: Map<string, number>,
+  options: ViewOptions
+) {
   const values = variant.attributeValues ?? new Map<string, string>();
   return {
     id: variant._id,
     attributeValues: Object.fromEntries(values),
-    name: variantName(product, values),
+    name: variantDisplayName(product, values),
     sku: variant.sku ?? null,
     barcodes: {
       upc: variant.barcodes?.upc ?? null,
@@ -467,8 +491,10 @@ function toVariantView(product: ProductDocument, variant: ProductVariantDocument
       mpn: variant.barcodes?.mpn ?? null,
     },
     sellingPrice: formatMoney(variant.sellingPriceMinor, decimals),
-    costPrice: variant.costPriceMinor === null ? null : formatMoney(variant.costPriceMinor, decimals),
+    costPrice:
+      !options.showCost || variant.costPriceMinor === null ? null : formatMoney(variant.costPriceMinor, decimals),
     reorderPoint: variant.reorderPoint ?? null,
+    stockOnHand: onHand(product, variant._id, stock),
     isDefault: variant.isDefault,
     isActive: variant.isActive,
   };
@@ -506,7 +532,9 @@ function toProductView(
   variants: ProductVariantDocument[],
   category: CategoryRef | null,
   taxRate: TaxRateRef,
-  decimals: number
+  decimals: number,
+  stock: Map<string, number>,
+  options: ViewOptions
 ) {
   return {
     ...productCore(product, variants, category, decimals),
@@ -535,26 +563,36 @@ function toProductView(
       valuationMethod: product.inventory.valuationMethod,
     },
     attributes: product.attributes.map((attribute) => ({ name: attribute.name, options: [...attribute.options] })),
-    variants: variants.map((variant) => toVariantView(product, variant, decimals)),
+    variants: variants.map((variant) => toVariantView(product, variant, decimals, stock, options)),
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
   };
 }
 
 /** Loads everything the full product response needs. */
-async function buildProductView(organizationId: string, product: ProductDocument, decimals?: number) {
+async function buildProductView(
+  organizationId: string,
+  product: ProductDocument,
+  decimals?: number,
+  options: ViewOptions = FULL_VIEW
+) {
   const [variants, categories, taxRate, resolvedDecimals] = await Promise.all([
     ProductVariant.find({ organizationId, productId: product._id }).sort({ _id: 1 }),
     categoryRefs(organizationId, product.categoryId ? [product.categoryId] : []),
     product.taxRateId ? TaxRate.findOne({ _id: product.taxRateId, organizationId }).select("name rate") : null,
     decimals ?? currencyDecimals(organizationId),
   ]);
+  const stock = product.inventory.trackInventory
+    ? await stockOnHandByVariant(organizationId, variants.map((variant) => variant._id))
+    : new Map<string, number>();
   return toProductView(
     product,
     variants,
     product.categoryId ? (categories.get(product.categoryId.toString()) ?? null) : null,
     taxRate ? { id: taxRate._id, name: taxRate.name, rate: taxRate.rate } : null,
-    resolvedDecimals
+    resolvedDecimals,
+    stock,
+    options
   );
 }
 
@@ -620,6 +658,11 @@ export async function listProducts(organizationId: string, input: ListProductsIn
     ProductVariant.find({ organizationId, productId: { $in: productIds } }).sort({ _id: 1 }),
     categoryRefs(organizationId, categoryIds),
   ]);
+  // One grouped read for the page; stockOnHand is never sorted or filtered on.
+  const stock = await stockOnHandByVariant(
+    organizationId,
+    variants.filter((variant) => variant.isActive).map((variant) => variant._id)
+  );
 
   const variantsByProduct = new Map<string, ProductVariantDocument[]>();
   for (const variant of variants) {
@@ -635,6 +678,13 @@ export async function listProducts(organizationId: string, input: ListProductsIn
         ...productCore(product, own, category, decimals),
         sku: product.itemType === "single" ? (own.find((variant) => variant.isDefault)?.sku ?? null) : null,
         variantCount: own.filter((variant) => variant.isActive).length,
+        stockOnHand: product.inventory.trackInventory
+          ? fromMilli(
+              own
+                .filter((variant) => variant.isActive)
+                .reduce((total, variant) => total + (stock.get(variant._id.toString()) ?? 0), 0)
+            )
+          : null,
         updatedAt: product.updatedAt,
       };
     }),
@@ -642,9 +692,9 @@ export async function listProducts(organizationId: string, input: ListProductsIn
   };
 }
 
-export async function getProduct(organizationId: string, productId: string) {
+export async function getProduct(organizationId: string, productId: string, options: ViewOptions = FULL_VIEW) {
   const product = await findProductOrThrow(organizationId, productId);
-  return buildProductView(organizationId, product);
+  return buildProductView(organizationId, product, undefined, options);
 }
 
 /**
@@ -652,7 +702,7 @@ export async function getProduct(organizationId: string, productId: string) {
  * wins over a SKU that happens to have the same characters. Inactive products and variants are
  * still returned so the POS can explain why they cannot be sold.
  */
-export async function lookupProduct(organizationId: string, code: string) {
+export async function lookupProduct(organizationId: string, code: string, options: ViewOptions = FULL_VIEW) {
   const text = code.trim();
   if (!text) {
     throw validationError("code", "Required");
@@ -675,26 +725,14 @@ export async function lookupProduct(organizationId: string, code: string) {
     throw ApiError.coded(404, "PRODUCT_NOT_FOUND", `No product matches '${text}'.`);
   }
 
-  return { product: await buildProductView(organizationId, product), variantId: variant._id, matchedOn };
+  return { product: await buildProductView(organizationId, product, undefined, options), variantId: variant._id, matchedOn };
 }
 
 // ==========================================
 // Create
 // ==========================================
 
-/**
- * The Phase 2 contract accepts opening stock, but the stock ledger is not built yet. Refuse it
- * rather than silently dropping it. Remove when the ledger lands.
- */
-function refuseOpeningStockUntilLedger(lines: unknown, field: string) {
-  if (lines !== undefined) {
-    throw validationError(field, "Opening stock is not available yet; it arrives with stock tracking.");
-  }
-}
-
 export async function createProduct(organizationId: string, input: CreateProductInput, actorUserId: string) {
-  refuseOpeningStockUntilLedger(input.inventory?.openingStock, "inventory.openingStock");
-  input.variants?.forEach((variant, index) => refuseOpeningStockUntilLedger(variant.openingStock, `variants[${index}].openingStock`));
   const decimals = await currencyDecimals(organizationId);
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
@@ -730,7 +768,11 @@ export async function createProduct(organizationId: string, input: CreateProduct
     isActive: input.isActive ?? true,
   });
 
-  let candidates: { variant: ProductVariantDocument; paths: FieldPaths }[];
+  let candidates: {
+    variant: ProductVariantDocument;
+    paths: FieldPaths;
+    opening?: { lines: NonNullable<VariantInput["openingStock"]>; field: string };
+  }[];
   if (input.itemType === "single") {
     const fields: VariantFields = {
       sku: input.sku,
@@ -739,8 +781,13 @@ export async function createProduct(organizationId: string, input: CreateProduct
       costPrice: input.purchase?.costPrice,
       reorderPoint: input.inventory?.reorderPoint,
     };
+    const lines = input.inventory?.openingStock;
     candidates = [
-      { variant: newVariant(organizationId, product, fields, decimals, SINGLE_PATHS, { isDefault: true }), paths: SINGLE_PATHS },
+      {
+        variant: newVariant(organizationId, product, fields, decimals, SINGLE_PATHS, { isDefault: true }),
+        paths: SINGLE_PATHS,
+        opening: lines ? { lines, field: "inventory.openingStock" } : undefined,
+      },
     ];
   } else {
     candidates = (input.variants ?? []).map((variantInput, index) => {
@@ -753,16 +800,39 @@ export async function createProduct(organizationId: string, input: CreateProduct
       return {
         variant: newVariant(organizationId, product, variantInput, decimals, paths, { attributeValues: values, comboKey }),
         paths,
+        opening: variantInput.openingStock
+          ? { lines: variantInput.openingStock, field: `variants[${index}].openingStock` }
+          : undefined,
       };
     });
   }
 
   await assertCodesAvailable(organizationId, candidates);
+  const withOpening = candidates.filter((candidate) => candidate.opening);
+  const openingLines = await prepareOpeningStock(
+    organizationId,
+    withOpening.map(({ variant, opening }) => ({
+      lines: opening!.lines,
+      unit: product.unit,
+      defaultCostMinor: variant.costPriceMinor,
+      field: opening!.field,
+    })),
+    decimals
+  );
 
   await inTransaction(async (session) => {
     await product.save({ session });
     for (const { variant } of candidates) {
       await variant.save({ session });
+    }
+    for (const [index, { variant }] of withOpening.entries()) {
+      await recordOpeningStock(session, {
+        organizationId,
+        productId: product._id,
+        variantId: variant._id,
+        lines: openingLines[index],
+        actorUserId,
+      });
     }
   });
 
@@ -880,6 +950,33 @@ export async function updateProduct(
     taxRateId = await resolveTaxRateId(organizationId, "standard", input.taxRateId);
   }
 
+  // Stored stock quantities are in the product's unit, so the unit is fixed once stock has moved,
+  // and tracking cannot be switched off while stock is on hand.
+  const productVariantIds = async () =>
+    (await ProductVariant.find({ organizationId, productId: product._id, isDelete: { $in: [true, false] } }).select("_id")).map(
+      (variant) => variant._id
+    );
+  if (input.unit !== undefined && input.unit !== product.unit && (await hasStockMovements(organizationId, await productVariantIds()))) {
+    throw ApiError.coded(
+      409,
+      "UNIT_LOCKED",
+      `The unit cannot change once stock has moved (it is '${product.unit}'); create a new product instead.`,
+      [{ field: "unit", code: "UNIT_LOCKED" }]
+    );
+  }
+  if (
+    input.inventory?.trackInventory === false &&
+    product.inventory.trackInventory &&
+    (await hasStockOnHand(organizationId, await productVariantIds()))
+  ) {
+    throw ApiError.coded(
+      409,
+      "STOCK_ON_HAND",
+      "Inventory tracking cannot be turned off while a store holds stock of this product. Adjust it to zero, or transfer it out of a deactivated store, first.",
+      [{ field: "inventory.trackInventory", code: "STOCK_ON_HAND" }]
+    );
+  }
+
   // A unit that only allows whole quantities must fit every existing reorder point.
   const unit = input.unit ?? product.unit;
   if (input.unit !== undefined && !unitAllowsDecimal(unit)) {
@@ -968,12 +1065,17 @@ export async function setProductActive(
 }
 
 /**
- * Soft-deletes a product and its variants, releasing their SKUs and barcodes.
- * NOTE: once stock or documents reference variants (Phase 2 onwards), a used product must be
- * refused with PRODUCT_IN_USE; deactivate it instead.
+ * Soft-deletes a product and its variants, releasing their SKUs and barcodes. A product whose
+ * variants have stock history is refused (PRODUCT_IN_USE): deactivate it instead.
  */
 export async function deleteProduct(organizationId: string, productId: string, actorUserId: string) {
   const product = await findProductOrThrow(organizationId, productId);
+  const variantIds = (
+    await ProductVariant.find({ organizationId, productId: product._id, isDelete: { $in: [true, false] } }).select("_id")
+  ).map((variant) => variant._id);
+  if (await hasStockMovements(organizationId, variantIds)) {
+    throw ApiError.coded(409, "PRODUCT_IN_USE", "This product has stock history and can only be deactivated.");
+  }
 
   await inTransaction(async (session) => {
     product.isDelete = true;
@@ -1002,8 +1104,10 @@ async function findVariantItemOrThrow(organizationId: string, productId: string)
 
 /** Adds a variant to a variant item, using the product's existing attribute options. */
 export async function addVariant(organizationId: string, productId: string, input: VariantInput, actorUserId: string) {
-  refuseOpeningStockUntilLedger(input.openingStock, "openingStock");
   const product = await findVariantItemOrThrow(organizationId, productId);
+  if (input.openingStock && !product.inventory.trackInventory) {
+    throw validationError("openingStock", "Opening stock needs a goods item that tracks inventory.");
+  }
   const decimals = await currencyDecimals(organizationId);
   const paths = variantPaths("");
 
@@ -1017,9 +1121,20 @@ export async function addVariant(organizationId: string, productId: string, inpu
 
   const variant = newVariant(organizationId, product, input, decimals, paths, { attributeValues: values, comboKey });
   await assertCodesAvailable(organizationId, [{ variant, paths }]);
+  let openingLines: PreparedOpeningLine[] = [];
+  if (input.openingStock) {
+    [openingLines] = await prepareOpeningStock(
+      organizationId,
+      [{ lines: input.openingStock, unit: product.unit, defaultCostMinor: variant.costPriceMinor, field: "openingStock" }],
+      decimals
+    );
+  }
 
   await inTransaction(async (session) => {
     await variant.save({ session });
+    if (openingLines.length > 0) {
+      await recordOpeningStock(session, { organizationId, productId: product._id, variantId: variant._id, lines: openingLines, actorUserId });
+    }
   });
 
   logger.info(`Variant added: ${variant._id} product=${productId} org=${organizationId} by user=${actorUserId}`);
@@ -1096,13 +1211,14 @@ export async function setVariantActive(
 
 /**
  * Soft-deletes a variant of a variant item, releasing its SKU and barcodes. The last active
- * variant cannot be deleted.
- * NOTE: once stock or documents reference variants (Phase 2 onwards), a used variant must be
- * refused with VARIANT_IN_USE; deactivate it instead.
+ * variant cannot be deleted, nor can one with stock history (VARIANT_IN_USE): deactivate it.
  */
 export async function deleteVariant(organizationId: string, productId: string, variantId: string, actorUserId: string) {
   const product = await findVariantItemOrThrow(organizationId, productId);
   const variant = await findVariantOrThrow(organizationId, productId, variantId);
+  if (await hasStockMovements(organizationId, [variant._id])) {
+    throw ApiError.coded(409, "VARIANT_IN_USE", "This variant has stock history and can only be deactivated.");
+  }
 
   if (variant.isActive && (await otherActiveVariants(organizationId, product, variant._id)) === 0) {
     throw lastActiveVariant();

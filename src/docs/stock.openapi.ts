@@ -23,18 +23,15 @@ import { API, errorResponse, json, server500, TENANT_AUTH_401 } from "./common";
 const security = [{ tenantBearerAuth: [] }];
 const tags = ["Inventory"];
 
-export const STOCK_PREVIEW_NOTE =
-  "> **Contract preview (Phase 2).** This endpoint is documented for review and is not implemented yet: calling it returns 404 until it ships.";
-
 const storeIdParam = z.object({
   storeId: z.string().openapi({ description: "Store ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3400" }),
 });
 
 const storeNote = (permission: string) =>
-  `${STOCK_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token and **\`${permission}\`** for this store: a store role at this store, or an organization-scoped role.`;
+  `Requires a **tenant** bearer token and **\`${permission}\`** for this store: a store role at this store, or an organization-scoped role.`;
 
 const orgNote = (permission: string) =>
-  `${STOCK_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token, an **organization-scoped role** and **\`${permission}\`**.`;
+  `Requires a **tenant** bearer token, an **organization-scoped role** and **\`${permission}\`**.`;
 
 const store403 = (permission: string) =>
   errorResponse(
@@ -52,7 +49,7 @@ const malformedStore400 = errorResponse(
 );
 
 const LIST_PARSING =
-  "Query parsing is lenient and never returns 400: an unrecognised filter value or an invalid `page`/`limit`/`from`/`to` is ignored (defaults: page 1, limit 20); `limit` is capped at 100.";
+  "Query parsing is lenient and never returns 400: an unrecognised filter value or an invalid `page`/`limit`/`from`/`to` is ignored (defaults: page 1, limit 20); `limit` is capped at 100 and `page` at 1,000,000. A malformed id used as a filter (`productId`, `variantId`, `categoryId`, `storeId`) matches nothing and returns an empty list.";
 
 const DATE_RULE =
   "`from` / `to` bare dates are read in the **organization's timezone** (`GET /organization` → `settings.timezone`), not UTC, and both days are included.";
@@ -64,7 +61,7 @@ const IDEMPOTENCY = [
   "**Idempotency** (`Idempotency-Key` header, required)",
   "- Generate one key (a UUID) when the user presses Save, and reuse it for every retry of that same action.",
   "- Same key and same body within 24 hours: the original response is returned again (same status and body) with the header `Idempotent-Replayed: true`. Nothing is applied twice.",
-  "- Same key with a different body or endpoint: 409 `IDEMPOTENCY_KEY_REUSED`.",
+  "- Same key with a different body, endpoint or user: 409 `IDEMPOTENCY_KEY_REUSED`.",
   "- Same key while the first request is still being processed: 409 `IDEMPOTENCY_IN_PROGRESS`; retry shortly.",
   "- Only successful responses are remembered: after a 4xx/5xx, fix the request and retry with the same key.",
 ].join("\n");
@@ -98,7 +95,7 @@ const idempotency409 = (extra: string[], example: { message: string; code: strin
   );
 
 const INSUFFICIENT_STOCK_LINE =
-  "- `INSUFFICIENT_STOCK`: a line would take stock below zero. One `errors` item per line: `{ field: \"lines[0]\", code, meta: { variantId, available, requested } }`. Nothing is applied.";
+  "- `INSUFFICIENT_STOCK`: a line would take stock below zero. One `errors` item per line: `{ field: \"lines[0]\", code, meta: { variantId, available, requested } }`. Nothing is applied. For a transfer `available` is never negative.";
 
 const insufficientExample = {
   message: "Not enough stock for 'Crew-neck T-shirt - M / Red': 4 available, 6 requested.",
@@ -113,6 +110,7 @@ const insufficientExample = {
 };
 
 const LINE_CODES = [
+  "- Line problems are collected in one response: `errors` has one item per bad line and the top-level `code` is the first item's (the items can mix `VARIANT_NOT_FOUND` and `VARIANT_NOT_STOCKED`).",
   "- `VARIANT_NOT_FOUND`: a line's `variantId` does not exist in your organization or is deleted (`errors[].field` is `lines[i].variantId`). Inactive products and variants are allowed.",
   "- `VARIANT_NOT_STOCKED`: the variant's product is a service or does not track inventory (`errors[].field` is `lines[i].variantId`).",
   `- \`VALIDATION_FAILED\`: a schema rule (see \`errors\`), or a fractional quantity for a whole-number unit (\`errors[0].field\` names the line's quantity field). ${QUANTITY_RULE}`,
@@ -158,7 +156,7 @@ registry.registerPath({
   tags,
   summary: "Stock of a product by store",
   description: [
-    `${STOCK_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role).`,
+    `Requires a **tenant** bearer token and **\`product:read\`** held anywhere (org role or any store role).`,
     "",
     "For the product page's stock tab: each variant (active and inactive) with its quantity in every **active store the caller can access** (all stores for an organization-scoped role, the assigned stores otherwise), including stores with quantity 0. `totalQuantity` sums the stores listed, so it can differ from the product's organization-wide `stockOnHand` for store staff.",
     "A product that does not track inventory returns `trackInventory: false` and quantities of 0.",
@@ -261,7 +259,7 @@ registry.registerPath({
     "  - `damaged`, `expired`, `theft_loss`: remove only (negative `quantityChange`).",
     "  - `found`: add only (positive `quantityChange`).",
     "  - `count_correction`: either direction, and the only reason besides `opening_balance` that accepts `countedQuantity`.",
-    "  - `opening_balance`: first stock for a product created before stock tracking (or without opening stock); add only, or a count. Writes `opening` movements instead of `adjustment`.",
+    "  - `opening_balance`: first stock for a product created before stock tracking (or without opening stock); add only, or a count (a count below the current stock is refused with 400 `VALIDATION_FAILED` on `lines[i].countedQuantity`). Writes `opening` movements instead of `adjustment`.",
     "  - `other`: either direction; needs a `note`.",
     `- ${QUANTITY_RULE}`,
     `- ${COST_RULE} \`unitCost\` is the cost **per unit** for lines that add stock and defaults to the current average cost, then the variant's cost price, then 0. It is refused with a negative \`quantityChange\`; on a count line it is used only if the count raises stock.`,
@@ -291,7 +289,7 @@ registry.registerPath({
   },
   responses: {
     201: {
-      description: "Adjustment recorded. The response shows each line's quantity before and after.",
+      description: "Adjustment recorded. The response shows each line's quantity before and after; `unitCost` and `valueChange` are null when the caller lacks `inventory:read` for this store.",
       headers: REPLAY_HEADERS,
       content: json(successEnvelope("CreateStockAdjustmentResponse", StockAdjustmentDataSchema, "Stock adjusted successfully.", 201)),
     },
@@ -302,7 +300,7 @@ registry.registerPath({
         ...LINE_CODES,
         "- A malformed `storeId` in the path also returns 400 (no `code`).",
       ].join("\n"),
-      "Request Validation Failed: lines[0]: Send exactly one of quantityChange or countedQuantity.",
+      "Request Validation Failed: lines.0: Send exactly one of quantityChange or countedQuantity.",
       400,
       "VALIDATION_FAILED"
     ),
@@ -358,7 +356,11 @@ registry.registerPath({
       description: "Adjustment fetched.",
       content: json(successEnvelope("GetStockAdjustmentResponse", StockAdjustmentDataSchema, "Stock adjustment fetched successfully.")),
     },
-    400: errorResponse("Malformed `storeId` or `adjustmentId`.", "Invalid storeId format. Must be a 24-character hex string.", 400),
+    400: errorResponse(
+      "Malformed `storeId` (message `Invalid storeId format. Must be a 24-character hex string.`) or `adjustmentId` (message `Invalid path identifier: Value 'abc' is not a valid ObjectId for path '_id'`). No `code`.",
+      "Invalid path identifier: Value 'abc' is not a valid ObjectId for path '_id'",
+      400
+    ),
     401: TENANT_AUTH_401,
     403: store403("inventory:read"),
     404: errorResponse(
@@ -389,16 +391,16 @@ const transferIdParam = z.object({
   transferId: z.string().openapi({ description: "Transfer ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3b00" }),
 });
 
-const transferReadNote = `${STOCK_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token and **\`inventory:read\`** held anywhere (org role or any store role). Store staff see only transfers into or out of their own stores; an organization-scoped role sees all.`;
+const transferReadNote = `Requires a **tenant** bearer token and **\`inventory:read\`** held anywhere (org role or any store role). Store staff see only transfers into or out of stores where they hold \`inventory:read\`; an organization-scoped role sees all.`;
 
 const transferRead403 = errorResponse(
-  "No role (organization or store) grants `inventory:read`, or (single transfer) neither store of the transfer is one the caller can access.",
+  "No role (organization or store) grants `inventory:read`.",
   "Access Denied: You do not possess the required permission (inventory:read) to execute this action.",
   403
 );
 
 const transfer403 = errorResponse(
-  "Not an organization-scoped role, or missing `inventory:transfer`.",
+  "Not an organization-scoped role (message `Access Denied: This action requires an organization-level role.`), or the role lacks `inventory:transfer` (message `Access Denied: You do not possess the required permission (inventory:transfer) to execute this action.`).",
   "Access Denied: This action requires an organization-level role.",
   403
 );
@@ -413,7 +415,7 @@ registry.registerPath({
     "",
     "**Rules**",
     "- One step: stock leaves `fromStoreId` and arrives at `toStoreId` immediately (a `transfer_out` and a `transfer_in` movement per line). There is no in-transit state.",
-    "- Both stores must be active stores of your organization and different from each other.",
+    "- Both stores must be stores of your organization and different from each other. The destination must be active; the **source may be deactivated**, so a closed branch can be emptied. (The per-store read endpoints, such as the stock list, return 403 for a deactivated store, and the product stock tab lists active stores only.)",
     `- ${QUANTITY_RULE} Each variant at most once per transfer.`,
     "- The source store must hold enough stock for every line, **even when the organization allows negative stock** (`INSUFFICIENT_STOCK`).",
     `- ${COST_RULE} Stock moves at the source store's average cost, and the destination's average is recalculated.`,
@@ -437,7 +439,7 @@ registry.registerPath({
         "Bad request. Codes:",
         "- `VALIDATION_FAILED` also covers a missing or malformed `Idempotency-Key` header and `fromStoreId` equal to `toStoreId`.",
         "- `STORE_NOT_FOUND`: `fromStoreId` or `toStoreId` is not a store of your organization (`errors[0].field` names it).",
-        "- `STORE_INACTIVE`: one of the stores is deactivated (`errors[0].field` names it).",
+        "- `STORE_INACTIVE`: the destination store (`toStoreId`) is deactivated (`errors[0].field` is `toStoreId`). A deactivated source is allowed.",
         ...LINE_CODES.filter((line) => !line.includes("unitCost")),
       ].join("\n"),
       "Store not found.",
@@ -493,7 +495,7 @@ registry.registerPath({
     400: errorResponse("Malformed transferId.", "Invalid path identifier: Value 'abc' is not a valid ObjectId for path '_id'", 400),
     401: TENANT_AUTH_401,
     403: transferRead403,
-    404: errorResponse("Transfer does not exist in your organization. Code `TRANSFER_NOT_FOUND`.", "Stock transfer not found.", 404, "TRANSFER_NOT_FOUND"),
+    404: errorResponse("The transfer does not exist in your organization, or touches none of the stores where you hold `inventory:read` (both look the same, so ids cannot be probed). Code `TRANSFER_NOT_FOUND`.", "Stock transfer not found.", 404, "TRANSFER_NOT_FOUND"),
     500: server500,
   },
 });

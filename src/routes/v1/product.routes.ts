@@ -36,6 +36,7 @@ import {
   activateVariant,
   removeVariant,
 } from "../../controllers/product.controller";
+import { productStock } from "../../controllers/stock.controller";
 
 const productRouter = Router();
 
@@ -50,6 +51,8 @@ const canDelete = [requireOrganizationRole, authorize("product:delete")];
 productRouter.get("/", canRead, list);
 productRouter.get("/lookup", canRead, lookup);
 productRouter.get("/:productId", canRead, getOne);
+// Narrowed to the caller's stores by the service.
+productRouter.get("/:productId/stock", canRead, productStock);
 
 productRouter.post("/", ...canCreate, validateRequest(createProductSchema), create);
 productRouter.patch("/:productId", ...canUpdate, validateRequest(updateProductSchema), update);
