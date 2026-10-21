@@ -136,6 +136,7 @@ export function generateOpenApiDocument() {
       { name: "Categories", description: "Organization-wide product categories, nested at most 2 levels (category → subcategory)." },
       { name: "Products", description: "The product catalog: single items, variant items (Size × Colour) and services, with barcode/SKU lookup." },
       { name: "Inventory", description: "Stock per store: levels, history (an append-only ledger), adjustments with set-to-counted mode, and transfers between stores. Weighted average cost." },
+      { name: "Vendors", description: "The organization's suppliers (TRN, country, contacts, payment terms), shared by every store. Purchase orders, receipts, bills and returns reference them." },
       { name: "User Invites", description: "Invite staff to an organization and accept invitations." },
       { name: "Staff Management", description: "Read the staff roster and manage an existing user's roles, store assignments and access." },
       { name: "Roles", description: "Read the organization's roles and the permission catalog (needed to resolve a roleId), and create, rename, edit the permissions of, or delete an organization's custom roles (`role:manage`, organization-scoped role required for writes)." },

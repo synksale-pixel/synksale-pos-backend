@@ -41,7 +41,7 @@ export const ErrorResponseSchema = z
     }),
     code: z.string().optional().openapi({
       description:
-        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE`, `PRODUCT_IN_USE`, `VARIANT_IN_USE`, and the stock codes `STORE_NOT_FOUND`, `STORE_INACTIVE`, `VARIANT_NOT_STOCKED`, `INSUFFICIENT_STOCK`, `UNIT_LOCKED`, `STOCK_ON_HAND`, `ADJUSTMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS`. Most older errors (401/403, plain 404/409) carry no code.",
+        "Stable machine-readable error code. OPTIONAL: present only when the server set one, so switch on it when you need to tell errors with the same status apart. Values: `VALIDATION_FAILED` (Zod/Mongoose validation 400), `DUPLICATE` (unique-index 409), plus domain codes such as `TAX_RATE_NAME_TAKEN`, `TAX_RATE_IS_DEFAULT`, `TAX_RATE_INACTIVE`, `TAX_RATE_NOT_FOUND`, `TAX_RATE_IN_USE`, `STORE_COUNTRY_CURRENCY_MISMATCH`, `CURRENCY_STORE_MISMATCH`, `CURRENCY_LOCKED`, `ORGANIZATION_NOT_FOUND`, and the catalog codes `CATEGORY_NOT_FOUND`, `CATEGORY_NAME_TAKEN`, `CATEGORY_IN_USE`, `CATEGORY_HAS_CHILDREN`, `CATEGORY_DEPTH_EXCEEDED`, `CATEGORY_CYCLE`, `PRODUCT_NOT_FOUND`, `VARIANT_NOT_FOUND`, `SKU_TAKEN`, `BARCODE_TAKEN`, `TAX_RATE_REQUIRED`, `PRODUCT_IS_VARIANT_ITEM`, `PRODUCT_NOT_VARIANT_ITEM`, `ATTRIBUTE_OPTION_IN_USE`, `ATTRIBUTES_LOCKED`, `VARIANT_COMBINATION_TAKEN`, `LAST_ACTIVE_VARIANT`, `TOO_MANY_DECIMALS`, `INVALID_AMOUNT`, `AMOUNT_OUT_OF_RANGE`, `PRODUCT_IN_USE`, `VARIANT_IN_USE`, and the stock codes `STORE_NOT_FOUND`, `STORE_INACTIVE`, `VARIANT_NOT_STOCKED`, `INSUFFICIENT_STOCK`, `UNIT_LOCKED`, `STOCK_ON_HAND`, `ADJUSTMENT_NOT_FOUND`, `TRANSFER_NOT_FOUND`, `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS`, and the vendor codes `VENDOR_NOT_FOUND`, `VENDOR_NAME_TAKEN`, `VENDOR_INACTIVE`, `VENDOR_IN_USE`. Most older errors (401/403, plain 404/409) carry no code.",
       example: "TAX_RATE_NAME_TAKEN",
     }),
     requestId: z.string().uuid().openapi({
@@ -617,7 +617,23 @@ export const ProductSchema = z
     sales: z.object({ description: z.string().nullable() }),
     purchase: z.object({
       description: z.string().nullable(),
-      preferredVendorName: z.string().nullable().openapi({ example: "Gulf Textiles W.L.L." }),
+      preferredVendorName: z.string().nullable().openapi({
+        description: "**Deprecated:** removed when vendors ship (Phase 3a); read `preferredVendor`.",
+        deprecated: true,
+        example: "Gulf Textiles W.L.L.",
+      }),
+      preferredVendor: z
+        .object({
+          id: objectId("665f1c2e8a4b3c0012ab3900"),
+          name: z.string().openapi({ example: "Gulf Textiles W.L.L." }),
+          isActive: z.boolean().openapi({ example: true }),
+        })
+        .nullable()
+        .optional()
+        .openapi({
+          description:
+            "The preferred vendor, or null. A deleted vendor reads as null. Optional in the schema until vendors ship; always present after.",
+        }),
     }),
     inventory: z.object({
       trackInventory: z.boolean().openapi({ example: true }),
@@ -897,3 +913,46 @@ export const StockTransferListDataSchema = z
     pagination: PaginationSchema,
   })
   .openapi("StockTransferListData");
+
+// ---------- Vendors (Phase 3a) ----------
+
+export const VendorSchema = z
+  .object({
+    _id: objectId("665f1c2e8a4b3c0012ab3900"),
+    id: objectId("665f1c2e8a4b3c0012ab3900"),
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    name: z.string().openapi({ example: "Gulf Roasters W.L.L." }),
+    legalName: z.string().nullable().openapi({ example: "Gulf Roasters Trading W.L.L." }),
+    taxRegistrationNumber: z.string().nullable().openapi({ example: "220000987600003" }),
+    countryCode: z.string().openapi({ example: "BH" }),
+    vatTreatment: z.enum(["vat_registered", "not_registered", "overseas"]).openapi({
+      description: "Read it as an open-ended string: later phases may add values (e.g. designated zones).",
+      example: "vat_registered",
+    }),
+    contactName: z.string().nullable().openapi({ example: "Hassan Ali" }),
+    email: z.string().nullable().openapi({ example: "orders@gulfroasters.bh" }),
+    phone: z.string().nullable().openapi({ example: "+973 1700 1234" }),
+    address: z.object({
+      line1: z.string().nullable().openapi({ example: "Building 1180, Road 3621" }),
+      line2: z.string().nullable().openapi({ example: "Block 436" }),
+      city: z.string().nullable().openapi({ example: "Manama" }),
+      state: z.string().nullable().openapi({ example: "Capital Governorate" }),
+      postalCode: z.string().nullable().openapi({ example: "436" }),
+    }).openapi({ description: "Always present; unset fields are null." }),
+    paymentTermsDays: z.number().int().openapi({ example: 30 }),
+    notes: z.string().nullable().openapi({ example: "Delivers Sunday and Wednesday mornings." }),
+    isActive: z.boolean().openapi({ example: true }),
+    productCount: z.number().int().openapi({ description: "Products that name this vendor as their preferred vendor.", example: 14 }),
+    createdAt: isoDate("2026-10-21T09:00:00.000Z"),
+    updatedAt: isoDate("2026-10-21T09:00:00.000Z"),
+  })
+  .openapi("Vendor");
+
+export const VendorDataSchema = z.object({ vendor: VendorSchema }).openapi("VendorData");
+
+export const VendorListDataSchema = z
+  .object({
+    vendors: z.array(VendorSchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("VendorListData");

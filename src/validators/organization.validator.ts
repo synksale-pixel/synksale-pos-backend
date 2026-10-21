@@ -15,6 +15,17 @@ export const currencyField = z
   .pipe(z.enum(CURRENCY_CODES, { message: `currency must be one of: ${CURRENCY_CODES.join(", ")}.` }))
   .openapi({ description: "ISO 4217 currency code.", example: "BHD" });
 
+/** A VAT Tax Registration Number (TRN), normalised: spaces and hyphens removed, uppercased. */
+export const taxRegistrationNumberField = z
+  .string()
+  .trim()
+  .transform((value) => value.replace(/[\s-]/g, "").toUpperCase())
+  .pipe(
+    z.string().regex(/^[A-Z0-9]{5,20}$/, {
+      message: "Tax registration number must be 5-20 letters or digits.",
+    })
+  );
+
 export const updateOrganizationSchema = z
   .object({
     legalName: z
@@ -25,15 +36,7 @@ export const updateOrganizationSchema = z
       .nullable()
       .optional()
       .openapi({ description: "Registered legal name printed on documents. null clears it.", example: "Al Noor Trading W.L.L." }),
-    taxRegistrationNumber: z
-      .string()
-      .trim()
-      .transform((value) => value.replace(/[\s-]/g, "").toUpperCase())
-      .pipe(
-        z.string().regex(/^[A-Z0-9]{5,20}$/, {
-          message: "Tax registration number must be 5-20 letters or digits.",
-        })
-      )
+    taxRegistrationNumber: taxRegistrationNumberField
       .nullable()
       .optional()
       .openapi({ description: "VAT Tax Registration Number (TRN). Spaces and hyphens are removed. null clears it.", example: "220000123400002" }),

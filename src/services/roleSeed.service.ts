@@ -42,6 +42,7 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "product:read",
       "inventory:read",
       "inventory:adjust",
+      "purchase:read",
       "report:view_store",
       "store:configure",
       // A store manager staffs their own store. The privilege ceiling in canGrantRole still
@@ -60,14 +61,24 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
     slug: "accountant",
     name: "Accountant",
     scope: "organization",
-    // product:read + inventory:read: stock valuation and the stock ledger.
-    permissions: ["report:view_org", "report:view_store", "sale:refund", "tax:manage", "product:read", "inventory:read"],
+    // product:read + inventory:read: stock valuation and the stock ledger. vendor:manage +
+    // purchase:read: the accountant keeps vendor records (TRN, payment terms) for bills.
+    permissions: [
+      "report:view_org",
+      "report:view_store",
+      "sale:refund",
+      "tax:manage",
+      "product:read",
+      "inventory:read",
+      "vendor:manage",
+      "purchase:read",
+    ],
   },
   {
     slug: "inventory_clerk",
     name: "Inventory Clerk",
     scope: "store",
-    permissions: ["product:read", "inventory:read", "inventory:adjust"],
+    permissions: ["product:read", "inventory:read", "inventory:adjust", "purchase:read"],
   },
 ];
 

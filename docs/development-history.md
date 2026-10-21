@@ -1114,3 +1114,101 @@ user, byte-identical, failures never stored), races between transfers and adjust
 `IDEMPOTENCY_IN_PROGRESS` is practically unreachable (concurrent duplicates conflict and
 replay). New: `tests/integration/stockLedgerReview.test.ts` (69 tests) and
 `tests/unit/stockMathEdgeCases.test.ts` (14). 810 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3 plan
+
+Phase 3 builds purchasing natively (no Zoho), in five sub-phases, each contract-first:
+**3a vendors**, **3b purchase orders**, **3c goods receipts** (the only thing that adds stock),
+**3d vendor bills and payments**, **3e returns to vendor** (damaged, expired, wrong item, excess)
+with debit notes. Later: PO approvals, landed cost, foreign-currency bills, purchase units
+(cartons), reorder suggestions, vendor statements, emailed POs.
+
+Decisions (approved 2026-10-21; the Purchases Specification v2 may still refine them):
+
+- Goods can be received without a PO.
+- A bill without a receipt is only for services (rent, freight); goods bills link to receipts.
+- Posted receipts are never edited or cancelled: fix them with a return or an adjustment.
+- Returns always need stock on hand, even when negative stock is allowed.
+- Receiving does not overwrite the product's cost price; "last purchase cost" is kept separately.
+- An organization without a TRN cannot reclaim input VAT, so VAT goes into its stock cost.
+- No foreign-currency bills in v1: everything is in the organization's currency.
+- One store per PO and receipt; vendors and bills are organization-wide. Numbers are per
+  organization and document type (PO-, GRN-, DN-).
+- A return may link to the receipt it came from (optional); vendor credit is used against
+  later bills.
+
+## 🧾 Purchases — Phase 3a contract (vendors: validators + Swagger, no endpoints yet)
+
+The **Vendors** endpoints (`GET/POST /vendors`, `GET/PATCH/DELETE /vendors/{vendorId}`) are
+documented in Swagger with a "contract preview" note and return 404 until implemented.
+
+- **Fields:** `name` (required, unique per organization, case-insensitive), `legalName`,
+  `taxRegistrationNumber` (normalised like the organization's TRN; not unique, since branches
+  share one), `countryCode` (any country; defaults to the organization's country from its
+  currency), `vatTreatment` (see the review changes below),
+  `contactName`, `email`, `phone`, `address` (all parts optional, merged on update),
+  `paymentTermsDays` (0-365, default 0), `notes`, `isActive`. No currency: v1 bills are in the
+  organization's currency.
+- **List:** paginated by name, with `search` (name, legal name, TRN, phone, email),
+  `isActive`, `countryCode` and `vatTreatment`. Each vendor shows `productCount` (products naming it as
+  preferred).
+- **Deactivate** (`isActive: false`) hides a vendor from pickers (what it blocks: see the
+  review changes below). **Delete** is a soft delete that clears products' preferred vendor; once purchasing
+  ships, a vendor with documents is refused (`VENDOR_IN_USE`). Posted documents will keep a copy
+  of the vendor's details, so later edits never change them.
+- **Product form:** `purchase.preferredVendorId` replaces the free-text `preferredVendorName`
+  (deprecated, removed when vendors ship; existing names are not converted). Products read back
+  `purchase.preferredVendor: { id, name, isActive } | null` (optional in the schema until then).
+  Until vendors ship, product create and update refuse `preferredVendorId` with 400
+  `VALIDATION_FAILED` instead of silently dropping it.
+- **Permissions:** `vendor:manage` (organization scope) for writes; `purchase:read` (store
+  scope, held anywhere) for reads, so staff receiving goods can pick the vendor (product
+  editors too: see below). Seeded:
+  org_admin both, accountant both, store_manager and inventory_clerk `purchase:read`, cashier
+  neither.
+- **Error codes:** `VENDOR_NOT_FOUND`, `VENDOR_NAME_TAKEN`, `VENDOR_INACTIVE`, `VENDOR_IN_USE`.
+- `taxRegistrationNumberField` moved into `organization.validator.ts` as a shared export.
+
+Changes from the tech-lead review (approved 2026-10-21):
+
+- **`vatTreatment`** (`vat_registered` / `not_registered` / `overseas`) is an explicit vendor
+  field instead of being inferred from country + TRN at bill time, which breaks for intra-GCC
+  supplies, unregistered local vendors and designated zones. On create it defaults from the
+  TRN and country (TRN → `vat_registered`; no TRN and foreign → `overseas`; else
+  `not_registered`); on update it changes only when sent. `vat_registered` needs a TRN. Posted
+  documents keep a copy. Response consumers treat it as open-ended.
+- **Deactivation** blocks only new purchase orders and receipts without a PO. Receipts against
+  open POs, bills, payments and returns stay allowed, so goods in transit and money owed can be
+  settled.
+- **Vendor reads** also allow `product:create` / `product:update` (held anywhere), so a catalog
+  editor role without `purchase:read` can still load the preferred-vendor picker.
+- **`preferredVendorId` is checked only when sent**, so an unrelated product edit never fails
+  because the stored vendor was later deactivated or deleted.
+- **Search:** TRN terms are normalised like the field; email terms lowercased; phone matches
+  the term's digits anywhere in a digits-only key, from 4 digits.
+- **`countryCode`** is checked against the 249 assigned ISO 3166-1 alpha-2 codes
+  (`src/config/isoCountries.config.ts`), on the body and on the list filter (uppercased). `UK`
+  and `XX` are rejected.
+- **For 3b:** vendor delete vs. purchase-document create will be claim-style
+  (`findOneAndUpdate` on a `hasDocuments` flag), so no PO, receipt or bill can attach to a
+  vendor being deleted. A dangling `preferredVendorId` after the delete/product-save race reads
+  as null and is accepted.
+- **Not added, on purpose:** vendor opening balance (comes in 3d as an opening-balance bill,
+  so payables come only from documents), vendor code, multiple contacts, bank details.
+- **When vendors ship:** count products with a `preferredVendorName` before removing it; if any
+  real tenant has some, copy them into `purchase.description` instead of dropping them.
+
+### Deploy note
+
+Run `npm run migrate` (it includes `sync:system-roles`) so existing organizations' roles receive
+`vendor:manage` and `purchase:read`.
+
+Testing: `tests/unit/vendorValidator.test.ts` pins the contract (Swagger examples parse, field
+rules, update rules, `preferredVendorId` on the product form);
+`tests/integration/vendorContract.test.ts` covers the `preferredVendorId` refusal (nothing
+persisted), the 404 routes, role seeding and the sync for existing organizations, role scope
+rules for the new keys, and the OpenAPI document. The refusal and 404 tests are in their own
+`describe` blocks, to be flipped when vendors ship. The Phase 2 role-sync test now also expects
+the Phase 3a keys.
