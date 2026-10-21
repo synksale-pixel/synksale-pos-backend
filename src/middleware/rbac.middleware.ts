@@ -175,9 +175,11 @@ const createScopeToStore = (allowInactive: boolean) =>
     }
 
     // Safely register storeId into request context
+    // Lower-cased: the tenant plugin compares ids as strings, and an upper-case hex id in the URL
+    // would otherwise differ from the ObjectId strings services pass (a 500 scope violation).
     const context = getRequestContext();
     if (context) {
-      context.storeId = storeId;
+      context.storeId = storeId.toLowerCase();
     }
 
     next();

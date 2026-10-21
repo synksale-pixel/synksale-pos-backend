@@ -15,6 +15,7 @@ import organizationRouter from "./organization.routes";
 import taxRateRouter from "./taxRate.routes";
 import categoryRouter from "./category.routes";
 import productRouter from "./product.routes";
+import { storeStockRouter, stockTransferRouter } from "./stock.routes";
 
 const v1Router = Router();
 
@@ -39,9 +40,11 @@ v1Router.use("/auth", tenantAuthRouter);
 v1Router.use("/users", userRouter);
 v1Router.use("/roles", roleRouter);
 v1Router.use("/stores", storeRouter);
+v1Router.use("/stores/:storeId", storeStockRouter);
 v1Router.use("/organization", organizationRouter);
 v1Router.use("/tax-rates", taxRateRouter);
 v1Router.use("/categories", categoryRouter);
 v1Router.use("/products", productRouter);
+v1Router.use("/stock-transfers", stockTransferRouter);
 
 export default v1Router;

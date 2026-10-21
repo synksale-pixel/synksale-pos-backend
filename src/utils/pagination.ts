@@ -8,6 +8,7 @@
 export const DEFAULT_PAGE = 1;
 export const DEFAULT_PAGE_LIMIT = 20;
 export const MAX_PAGE_LIMIT = 100;
+export const MAX_PAGE = 1_000_000;
 
 export interface PaginationInput {
   page?: number;
@@ -31,7 +32,9 @@ export function resolvePaging(input: PaginationInput): {
   limit: number;
   skip: number;
 } {
-  const page = input.page && input.page > 0 ? Math.floor(input.page) : DEFAULT_PAGE;
+  // Capped: an absurd page (1e30, Infinity) would make MongoDB reject the skip with a 500.
+  const page =
+    input.page && Number.isFinite(input.page) && input.page > 0 ? Math.min(Math.floor(input.page), MAX_PAGE) : DEFAULT_PAGE;
   const limit =
     input.limit && input.limit > 0
       ? Math.min(Math.floor(input.limit), MAX_PAGE_LIMIT)

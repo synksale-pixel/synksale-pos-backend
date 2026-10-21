@@ -212,7 +212,7 @@ export const createStockTransferSchema = z
 // Query strings (documented; parsed leniently by the controller)
 // ==========================================
 
-const pageField = z.number().int().optional().openapi({ description: "1-based page number (default 1).", example: 1 });
+const pageField = z.number().int().optional().openapi({ description: "1-based page number (default 1; values above 1,000,000 are clamped).", example: 1 });
 const limitField = z.number().int().optional().openapi({ description: "Page size (default 20, max 100).", example: 20 });
 // Bare dates are read in the organization's timezone, not UTC: a Bahrain store's 1am sale belongs
 // to the local day. This is the first date filter in the API and the rule for reports to follow.

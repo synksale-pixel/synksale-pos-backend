@@ -115,6 +115,42 @@ export async function getPermissionsAcrossStores(user: IUser): Promise<string[]>
 }
 
 /**
+ * The stores in which the user holds `permission`: "all" when it comes from their organization
+ * role (or they are a super admin), otherwise the ids of the stores whose store role grants it
+ * (possibly none). For narrowing store-agnostic results, e.g. which stores' costs to show.
+ */
+const grants = (permissions: readonly string[], permission: string) =>
+  permissions.includes("*") || permissions.includes(permission);
+
+export async function storesWithPermission(user: IUser, permission: string): Promise<"all" | Set<string>> {
+  if (user.isSuperAdmin) {
+    return "all";
+  }
+
+  const orgRoleId = refToId(user.orgRoleId);
+  if (orgRoleId) {
+    const orgRole = (await Role.findById(orgRoleId).lean().exec()) as IRole | null;
+    if (orgRole && orgRole.isDelete !== true && grants(orgRole.permissions, permission)) {
+      return "all";
+    }
+  }
+
+  const access = user.storeAccess ?? [];
+  const roleIds = access.map((entry) => refToId(entry.roleId)).filter((id): id is mongoose.Types.ObjectId => id !== null);
+  if (roleIds.length === 0) {
+    return new Set();
+  }
+  const granting = new Set(
+    ((await Role.find({ _id: { $in: roleIds } }).lean().exec()) as (IRole & { _id: mongoose.Types.ObjectId })[])
+      .filter((role) => grants(role.permissions, permission))
+      .map((role) => role._id.toString())
+  );
+  return new Set(
+    access.filter((entry) => granting.has(String(refToId(entry.roleId)))).map((entry) => String(refToId(entry.storeId)))
+  );
+}
+
+/**
  * True when the user holds an (undeleted) organization-scoped role such as org_admin.
  * Requires `user.orgRoleId` to be populated (the authenticate middleware does this).
  */

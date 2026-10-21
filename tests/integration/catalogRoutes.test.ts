@@ -252,7 +252,7 @@ describe("products over HTTP", () => {
     expect(opening.status).toBe(400);
     expect(opening.body.code).toBe("VALIDATION_FAILED");
 
-    // Well-formed opening stock is refused, not dropped, until the stock ledger ships.
+    // Opening stock naming a store outside the organization is refused and nothing is saved.
     const store = new mongoose.Types.ObjectId().toString();
     const contractOpening = await createFromExample({
       ...singleExample,
@@ -261,7 +261,7 @@ describe("products over HTTP", () => {
       inventory: { openingStock: [{ storeId: store, quantity: 2 }] },
     });
     expect(contractOpening.status).toBe(400);
-    expect(contractOpening.body.errors[0]).toMatchObject({ field: "inventory.openingStock", code: "VALIDATION_FAILED" });
+    expect(contractOpening.body.errors[0]).toMatchObject({ field: "inventory.openingStock[0].storeId", code: "STORE_NOT_FOUND" });
     expect((await request.get(`${PRODUCTS}?search=OPEN-1`).set(auth(admin))).body.data.products).toHaveLength(0);
 
     const variantOnly = await request.post(`${PRODUCTS}/${created._id}/variants`).set(auth(admin)).send({ attributeValues: { Size: "S" }, sellingPrice: "1" });

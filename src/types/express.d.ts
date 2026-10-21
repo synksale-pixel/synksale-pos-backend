@@ -5,6 +5,8 @@ declare global {
     interface Request {
       id?: string;
       user?: UserDocument;
+      /** Set by requireIdempotencyKey on stock-changing routes. */
+      idempotencyKey?: string;
     }
   }
 }
