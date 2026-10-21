@@ -19,6 +19,9 @@ export type PermissionKey =
   | "inventory:read"
   | "inventory:adjust"
   | "inventory:transfer"
+  // Purchases
+  | "vendor:manage"
+  | "purchase:read"
   // Reports
   | "report:view_store"
   | "report:view_org"
@@ -115,6 +118,23 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     label: "Transfer Inventory Between Stores",
     category: "Inventory",
     minScope: "organization",
+  },
+
+  // ===== Purchases =====
+  {
+    // Vendors are shared by every store, so editing them is an organization-level job.
+    key: "vendor:manage",
+    label: "Create/Modify Vendors",
+    category: "Purchases",
+    minScope: "organization",
+  },
+  {
+    // Vendors now; purchase orders, receipts, bills and returns as they ship. Store staff who
+    // receive goods need it to pick the vendor.
+    key: "purchase:read",
+    label: "View Vendors and Purchases",
+    category: "Purchases",
+    minScope: "store",
   },
 
   // ===== Reports =====

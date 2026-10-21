@@ -732,7 +732,18 @@ export async function lookupProduct(organizationId: string, code: string, option
 // Create
 // ==========================================
 
+/**
+ * The Phase 3a contract accepts a preferred vendor reference, but vendors are not built yet.
+ * Refuse it rather than silently dropping it. Remove when vendors land.
+ */
+function refusePreferredVendorUntilVendors(vendorId: unknown) {
+  if (vendorId !== undefined) {
+    throw validationError("purchase.preferredVendorId", "Vendors are not available yet; they arrive with purchasing.");
+  }
+}
+
 export async function createProduct(organizationId: string, input: CreateProductInput, actorUserId: string) {
+  refusePreferredVendorUntilVendors(input.purchase?.preferredVendorId);
   const decimals = await currencyDecimals(organizationId);
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
@@ -900,6 +911,7 @@ export async function updateProduct(
   input: UpdateProductInput,
   actorUserId: string
 ) {
+  refusePreferredVendorUntilVendors(input.purchase?.preferredVendorId);
   const product = await findProductOrThrow(organizationId, productId);
   const decimals = await currencyDecimals(organizationId);
   const isSingle = product.itemType === "single";

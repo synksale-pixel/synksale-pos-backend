@@ -13,5 +13,6 @@ import "./taxRate.openapi";
 import "./category.openapi";
 import "./product.openapi";
 import "./stock.openapi";
+import "./vendor.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";
