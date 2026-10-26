@@ -16,6 +16,7 @@ import taxRateRouter from "./taxRate.routes";
 import categoryRouter from "./category.routes";
 import productRouter from "./product.routes";
 import { storeStockRouter, stockTransferRouter } from "./stock.routes";
+import vendorRouter from "./vendor.routes";
 
 const v1Router = Router();
 
@@ -46,5 +47,6 @@ v1Router.use("/tax-rates", taxRateRouter);
 v1Router.use("/categories", categoryRouter);
 v1Router.use("/products", productRouter);
 v1Router.use("/stock-transfers", stockTransferRouter);
+v1Router.use("/vendors", vendorRouter);
 
 export default v1Router;

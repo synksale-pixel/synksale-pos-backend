@@ -276,8 +276,11 @@ export const authorize = (requiredPermission: PermissionKey) => {
  * This checks "may you do this somewhere", so any endpoint using it MUST still narrow what it
  * returns or touches to the caller's own stores. Never use it on a route that acts on a single
  * store: that is what `authorize` plus `scopeToStore` are for.
+ *
+ * Several permissions mean "any one of them" (e.g. vendor reads for purchasing staff or catalog
+ * editors); the 403 message names the first.
  */
-export const authorizeAnyScope = (requiredPermission: PermissionKey) => {
+export const authorizeAnyScope = (...requiredPermissions: [PermissionKey, ...PermissionKey[]]) => {
   return asyncHandler(
     async (req: Request, _res: Response, next: NextFunction) => {
       if (!req.user) {
@@ -290,12 +293,13 @@ export const authorizeAnyScope = (requiredPermission: PermissionKey) => {
       const permissions = await getPermissionsAcrossStores(req.user);
 
       const hasPermission =
-        permissions.includes("*") || permissions.includes(requiredPermission);
+        permissions.includes("*") ||
+        requiredPermissions.some((permission) => permissions.includes(permission));
 
       if (!hasPermission) {
         throw new ApiError(
           403,
-          `Access Denied: You do not possess the required permission (${requiredPermission}) to execute this action.`
+          `Access Denied: You do not possess the required permission (${requiredPermissions[0]}) to execute this action.`
         );
       }
 

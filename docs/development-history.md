@@ -1212,3 +1212,67 @@ persisted), the 404 routes, role seeding and the sync for existing organizations
 rules for the new keys, and the OpenAPI document. The refusal and 404 tests are in their own
 `describe` blocks, to be flipped when vendors ship. The Phase 2 role-sync test now also expects
 the Phase 3a keys.
+
+---
+
+## 🧾 Purchases — Phase 3a implementation (vendors)
+
+The Vendors endpoints are live behind the Phase 3a contract.
+
+- **Model** `Vendor` (organization-scoped, soft delete): `nameKey` backs a unique
+  `{ organizationId, nameKey }` index on non-deleted vendors; `phoneKey` (digits only) backs the
+  phone search. TRNs are stored normalised. Address is always present with null parts.
+- **Create** fills `countryCode` from the organization's currency (BHD → BH) and derives
+  `vatTreatment` when omitted. **Update** applies only the sent fields, merges `address` field by
+  field (`null` clears it), never re-derives `vatTreatment`, and refuses `vat_registered` when the
+  resulting TRN is empty. Name clashes are `VENDOR_NAME_TAKEN` (pre-check plus the unique index for
+  concurrent creates).
+- **List** sorts by name; filters are lenient like the other lists (an unknown country or VAT
+  treatment matches nothing). `productCount` is one grouped read per page.
+- **Delete** soft-deletes and clears `purchase.preferredVendorId` on products in one
+  transaction. `VENDOR_IN_USE` arrives with purchase documents in 3b.
+- **Reads** use `authorizeAnyScope("purchase:read", "product:create", "product:update")`;
+  `authorizeAnyScope` now accepts several permissions (any one suffices).
+- **Products:** `purchase.preferredVendorId` replaces `preferredVendorName` (now an unknown
+  field, 400). It is checked only when sent (`VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`, 400, field
+  `purchase.preferredVendorId`). Products read back `purchase.preferredVendor: { id, name,
+  isActive } | null`; a deleted vendor reads as null. New index
+  `{ organizationId, "purchase.preferredVendorId" }`.
+- **Migration** `npm run migrate:vendor-names` (now part of `npm run migrate`) appends each old
+  free-text name to the product's purchase description ("Preferred vendor: …", kept within 1000
+  characters) and removes the field. Idempotent.
+- **Test setup** now waits for every model's indexes (`Model.init()`) before tests run. Without
+  it a file's first tests could run before a unique index existed, which made the concurrent-SKU
+  test flaky once the new product index and vendor collection lengthened index builds.
+
+### Deploy note
+
+Run `npm run migrate`: it builds the vendor and product indexes, syncs the role permissions and
+migrates the old vendor names.
+
+Testing: `tests/integration/vendors.test.ts` (create defaults and VAT derivation, uniqueness
+including concurrent creates, reads and tenant isolation, search and filters, update rules,
+permissions per role including a catalog-editor custom role, the preferred vendor on products,
+delete clearing, dangling references, the name migration). `vendorContract.test.ts` was flipped
+to the shipped behaviour. 882 tests pass.
+
+### pos-tester review
+
+Fixed:
+
+- A NUL byte in `search` (`?search=%00`) returned 500, because MongoDB rejects such a regex. The
+  term now drops NUL bytes in the vendor, product and store stock lists (the latter two had the
+  same bug).
+- The name migration turned a whitespace-only name into a bare "Preferred vendor: " line; such
+  values are now just removed.
+- `mergedDescription` cut the vendor line when the existing description was near 1000
+  characters; it now shortens the existing description instead, so the name is kept.
+
+Reviewed and holding: tenant isolation (reads, writes, deletes, `productCount`, cross-org
+`preferredVendorId`), the read/write permission gates, delete atomicity (a failed product clear
+rolls the vendor delete back), every response against its Zod schema, and hostile query, path and
+body input. Known and accepted: lenient list filters (as on the other lists), two concurrent
+deletes of one vendor both return 200, and soft-deleted products keep a dangling
+`preferredVendorId` (reads as null). An organization role with only `vendor:manage` cannot read
+vendors (the documented read gate); seeded roles always pair it with `purchase:read`.
+New: `tests/integration/vendorReview.test.ts` (88 tests). 971 tests pass.

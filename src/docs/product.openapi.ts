@@ -75,6 +75,7 @@ const REFERENCE_CODES = [
   "- `CATEGORY_NOT_FOUND`: `categoryId` does not exist in your organization (here it is a 400, not a 404; `errors[0].field` is `categoryId`).",
   "- `TAX_RATE_NOT_FOUND` / `TAX_RATE_INACTIVE`: `taxRateId` does not exist, or the rate is deactivated (`errors[0].field` is `taxRateId`).",
   "- `TAX_RATE_REQUIRED`: a `standard` product with no `taxRateId`, and the organization has no active default rate.",
+  "- `VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`: a sent `purchase.preferredVendorId` does not exist in your organization, or the vendor is deactivated (`errors[0].field` is `purchase.preferredVendorId`).",
 ];
 const BODY_CODES =
   '- `VALIDATION_FAILED`: a schema or cross-field rule (see the Rules in the create description). For schema errors `errors` lists each issue with its `path`. The service raises the same code for rules that depend on stored state, as `errors[0]` = `{ field, code: "VALIDATION_FAILED", message }`.';
@@ -220,7 +221,7 @@ export const singleExample = {
   imageUrl: "https://cdn.example.com/coffee.jpg",
   weight: { value: 0.25, unit: "kg" },
   sales: { sellingPrice: "2.750", description: "Cardamom blend." },
-  purchase: { costPrice: "1.600", preferredVendorName: "Gulf Roasters W.L.L." },
+  purchase: { costPrice: "1.600" },
   inventory: { trackInventory: true, reorderPoint: 12, returnable: false },
 };
 

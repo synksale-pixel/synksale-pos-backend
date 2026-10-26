@@ -617,11 +617,6 @@ export const ProductSchema = z
     sales: z.object({ description: z.string().nullable() }),
     purchase: z.object({
       description: z.string().nullable(),
-      preferredVendorName: z.string().nullable().openapi({
-        description: "**Deprecated:** removed when vendors ship (Phase 3a); read `preferredVendor`.",
-        deprecated: true,
-        example: "Gulf Textiles W.L.L.",
-      }),
       preferredVendor: z
         .object({
           id: objectId("665f1c2e8a4b3c0012ab3900"),
@@ -629,11 +624,7 @@ export const ProductSchema = z
           isActive: z.boolean().openapi({ example: true }),
         })
         .nullable()
-        .optional()
-        .openapi({
-          description:
-            "The preferred vendor, or null. A deleted vendor reads as null. Optional in the schema until vendors ship; always present after.",
-        }),
+        .openapi({ description: "The preferred vendor, or null. A deleted vendor reads as null." }),
     }),
     inventory: z.object({
       trackInventory: z.boolean().openapi({ example: true }),

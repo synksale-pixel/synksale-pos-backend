@@ -7,9 +7,6 @@ const security = [{ tenantBearerAuth: [] }];
 const tags = ["Vendors"];
 const base = `${API}/vendors`;
 
-export const VENDOR_PREVIEW_NOTE =
-  "> **Contract preview (Phase 3a).** This endpoint is documented for review and is not implemented yet: calling it returns 404 until it ships.";
-
 const vendorIdParam = z.object({
   vendorId: z.string().openapi({
     description: "Vendor ID (24-char hex ObjectId). A malformed ID returns 400.",
@@ -43,8 +40,8 @@ export const foreignVendorExample = {
   paymentTermsDays: 0,
 };
 
-const readNote = `${VENDOR_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token and, held anywhere (org role or any store role), **\`purchase:read\`** (staff who receive goods pick the vendor) **or \`product:create\` / \`product:update\`** (the product form's preferred-vendor picker). Vendors are organization-wide.`;
-const writeNote = `${VENDOR_PREVIEW_NOTE}\n\nRequires a **tenant** bearer token, an **organization-scoped role** and **\`vendor:manage\`**.`;
+const readNote = `Requires a **tenant** bearer token and, held anywhere (org role or any store role), **\`purchase:read\`** (staff who receive goods pick the vendor) **or \`product:create\` / \`product:update\`** (the product form's preferred-vendor picker). Vendors are organization-wide.`;
+const writeNote = `Requires a **tenant** bearer token, an **organization-scoped role** and **\`vendor:manage\`**.`;
 
 const read403 = errorResponse(
   "No role grants `purchase:read`, `product:create` or `product:update`.",
@@ -171,7 +168,7 @@ registry.registerPath({
     writeNote,
     "",
     "Send only the fields to change; null clears an optional field. `address` is merged field by field.",
-    "- `isActive: false` hides the vendor from pickers (`isActive=true`). Once purchasing ships it blocks **new purchase orders** and **receipts without a PO**. Receipts against its open POs, bills, payments and returns are still allowed, so goods in transit and money owed can be settled. Products keep it as their preferred vendor.",
+    "- `isActive: false` hides the vendor from pickers (`isActive=true`). From Phase 3b it blocks **new purchase orders** and **receipts without a PO**. Receipts against its open POs, bills, payments and returns are still allowed, so goods in transit and money owed can be settled. Products keep it as their preferred vendor.",
     "- `vatTreatment` is not re-derived when the TRN or country changes; send it too if it should change.",
     "- Changing the name, TRN or VAT treatment does not change documents already posted: they keep a copy of the vendor's details as they were.",
   ].join("\n"),
@@ -218,7 +215,7 @@ registry.registerPath({
     writeNote,
     "",
     "Soft delete; the name becomes reusable. Products that named this vendor as preferred are cleared (`preferredVendor: null`).",
-    "Once purchasing ships, a vendor with any purchase order, receipt, bill or return cannot be deleted (`VENDOR_IN_USE`); deactivate it instead.",
+    "From Phase 3b, a vendor with any purchase order, receipt, bill or return cannot be deleted (`VENDOR_IN_USE`); deactivate it instead.",
   ].join("\n"),
   security,
   request: { params: vendorIdParam },
@@ -232,7 +229,7 @@ registry.registerPath({
     403: write403,
     404: notFound404,
     409: errorResponse(
-      "The vendor has purchase documents (Phase 3b onwards). Code `VENDOR_IN_USE`; `errors[0].meta.documentCount` says how many. Deactivate the vendor instead.",
+      "From Phase 3b: the vendor has purchase documents. Code `VENDOR_IN_USE`; `errors[0].meta.documentCount` says how many. Deactivate the vendor instead.",
       "This vendor has 3 purchase documents. Deactivate it instead.",
       409,
       "VENDOR_IN_USE",
