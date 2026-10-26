@@ -238,13 +238,9 @@ const purchaseGroup = z
   .object({
     costPrice: variantFields.costPrice.openapi({ description: "Single items only. VAT-exclusive." }),
     description: optionalText("Purchase description", 1000, "Carton of 24.").nullable().optional(),
-    preferredVendorName: optionalText("Preferred vendor", 100, "Gulf Textiles W.L.L.").nullable().optional().openapi({
-      description: "**Deprecated:** removed when vendors ship (Phase 3a); use `preferredVendorId`. Existing names are not converted.",
-      deprecated: true,
-    }),
     preferredVendorId: objectIdField("preferredVendorId", "665f1c2e8a4b3c0012ab3900").nullable().optional().openapi({
       description:
-        "The vendor this product is usually bought from (null clears it). Checked only when sent: it must be an active vendor of your organization (`VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`, 400). An update that leaves it out never fails because the stored vendor was later deactivated or deleted. Refused with 400 until vendors ship.",
+        "The vendor this product is usually bought from (null clears it). Checked only when sent: it must be an active vendor of your organization (`VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`, 400). An update that leaves it out never fails because the stored vendor was later deactivated or deleted.",
     }),
   })
   .strict();

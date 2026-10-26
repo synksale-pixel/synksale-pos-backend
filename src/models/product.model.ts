@@ -46,7 +46,7 @@ export interface IProduct {
   weight: { value: number; unit: "kg" | "lb" } | null;
   reportingTags: string[];
   sales: { description: string | null };
-  purchase: { description: string | null; preferredVendorName: string | null };
+  purchase: { description: string | null; preferredVendorId: mongoose.Types.ObjectId | null };
   inventory: {
     trackInventory: boolean;
     returnable: boolean;
@@ -157,7 +157,7 @@ const productSchema = new Schema<IProduct, ProductModel>(
     },
     purchase: {
       description: nullableText,
-      preferredVendorName: nullableText,
+      preferredVendorId: { type: Schema.Types.ObjectId, ref: "Vendor", default: null },
     },
     inventory: {
       trackInventory: { type: Boolean, default: true },
@@ -214,6 +214,9 @@ productSchema.index({ organizationId: 1, reportingTags: 1 });
 
 /** Tax-rate-in-use guard: a rate referenced by a product cannot be deleted. */
 productSchema.index({ organizationId: 1, taxRateId: 1 });
+
+/** The productCount on each vendor, and clearing references when a vendor is deleted. */
+productSchema.index({ organizationId: 1, "purchase.preferredVendorId": 1 });
 
 productSchema.plugin(tenantScopePlugin, { scope: "organization" });
 

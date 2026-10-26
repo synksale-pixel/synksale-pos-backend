@@ -243,6 +243,14 @@ describe("list query hardening", () => {
     await post(single({ name: "Tea", sku: "TEA-1", barcodes: undefined, reportingTags: ["hot"] }));
   });
 
+  it("a NUL byte in the search term is dropped instead of returning 500 (products and store stock)", async () => {
+    const products = await request.get(`${PRODUCTS}?search=Te%00a`).set(auth(admin));
+    expect(products.status).toBe(200);
+    expect(products.body.data.products.map((p: { name: string }) => p.name)).toEqual(["Tea"]);
+    const stock = await request.get(`/api/v1/stores/${ctx.store._id}/stock?search=%00`).set(auth(admin));
+    expect(stock.status).toBe(200);
+  });
+
   it("treats operator-shaped and array parameters as absent", async () => {
     const qs = [
       "search[$ne]=zzz",

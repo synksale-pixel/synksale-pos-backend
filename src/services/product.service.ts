@@ -31,6 +31,7 @@ import { getCurrency } from "../config/currencies.config";
 import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
 import { assertCategoryExists, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
+import { assertVendorSelectable, vendorRefs, VendorRef } from "./vendor.service";
 import { recordAudit } from "./audit.service";
 import {
   prepareOpeningStock,
@@ -532,6 +533,7 @@ function toProductView(
   variants: ProductVariantDocument[],
   category: CategoryRef | null,
   taxRate: TaxRateRef,
+  preferredVendor: VendorRef | null,
   decimals: number,
   stock: Map<string, number>,
   options: ViewOptions
@@ -555,7 +557,8 @@ function toProductView(
     sales: { description: product.sales?.description ?? null },
     purchase: {
       description: product.purchase?.description ?? null,
-      preferredVendorName: product.purchase?.preferredVendorName ?? null,
+      // A deleted vendor (or a reference left by a delete racing a save) reads as null.
+      preferredVendor,
     },
     inventory: {
       trackInventory: product.inventory.trackInventory,
@@ -576,10 +579,12 @@ async function buildProductView(
   decimals?: number,
   options: ViewOptions = FULL_VIEW
 ) {
-  const [variants, categories, taxRate, resolvedDecimals] = await Promise.all([
+  const vendorId = product.purchase?.preferredVendorId ?? null;
+  const [variants, categories, taxRate, vendors, resolvedDecimals] = await Promise.all([
     ProductVariant.find({ organizationId, productId: product._id }).sort({ _id: 1 }),
     categoryRefs(organizationId, product.categoryId ? [product.categoryId] : []),
     product.taxRateId ? TaxRate.findOne({ _id: product.taxRateId, organizationId }).select("name rate") : null,
+    vendorRefs(organizationId, vendorId ? [vendorId] : []),
     decimals ?? currencyDecimals(organizationId),
   ]);
   const stock = product.inventory.trackInventory
@@ -590,6 +595,7 @@ async function buildProductView(
     variants,
     product.categoryId ? (categories.get(product.categoryId.toString()) ?? null) : null,
     taxRate ? { id: taxRate._id, name: taxRate.name, rate: taxRate.rate } : null,
+    vendorId ? (vendors.get(vendorId.toString()) ?? null) : null,
     resolvedDecimals,
     stock,
     options
@@ -628,7 +634,8 @@ export async function listProducts(organizationId: string, input: ListProductsIn
   if (input.isActive !== undefined) filter.isActive = input.isActive;
   if (input.tag) filter.reportingTags = input.tag;
 
-  const term = input.search?.trim();
+  // MongoDB rejects a regex containing a NUL byte (500), so drop any from the term.
+  const term = input.search?.replace(/\0/g, "").trim();
   if (term) {
     const matchingVariantProducts = await ProductVariant.distinct("productId", {
       organizationId,
@@ -732,21 +739,13 @@ export async function lookupProduct(organizationId: string, code: string, option
 // Create
 // ==========================================
 
-/**
- * The Phase 3a contract accepts a preferred vendor reference, but vendors are not built yet.
- * Refuse it rather than silently dropping it. Remove when vendors land.
- */
-function refusePreferredVendorUntilVendors(vendorId: unknown) {
-  if (vendorId !== undefined) {
-    throw validationError("purchase.preferredVendorId", "Vendors are not available yet; they arrive with purchasing.");
-  }
-}
-
 export async function createProduct(organizationId: string, input: CreateProductInput, actorUserId: string) {
-  refusePreferredVendorUntilVendors(input.purchase?.preferredVendorId);
   const decimals = await currencyDecimals(organizationId);
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
+  }
+  if (input.purchase?.preferredVendorId) {
+    await assertVendorSelectable(organizationId, input.purchase.preferredVendorId, "purchase.preferredVendorId");
   }
   const taxRateId = await resolveTaxRateId(organizationId, input.taxPreference, input.taxRateId);
   const isService = input.type === "service";
@@ -769,7 +768,7 @@ export async function createProduct(organizationId: string, input: CreateProduct
     sales: { description: input.sales?.description ?? null },
     purchase: {
       description: input.purchase?.description ?? null,
-      preferredVendorName: input.purchase?.preferredVendorName ?? null,
+      preferredVendorId: input.purchase?.preferredVendorId ?? null,
     },
     inventory: {
       trackInventory: isService ? false : (input.inventory?.trackInventory ?? true),
@@ -911,7 +910,6 @@ export async function updateProduct(
   input: UpdateProductInput,
   actorUserId: string
 ) {
-  refusePreferredVendorUntilVendors(input.purchase?.preferredVendorId);
   const product = await findProductOrThrow(organizationId, productId);
   const decimals = await currencyDecimals(organizationId);
   const isSingle = product.itemType === "single";
@@ -947,6 +945,10 @@ export async function updateProduct(
 
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
+  }
+  // Checked only when sent, so an unrelated edit never fails on a since-deactivated vendor.
+  if (input.purchase?.preferredVendorId) {
+    await assertVendorSelectable(organizationId, input.purchase.preferredVendorId, "purchase.preferredVendorId");
   }
 
   // Tax: a non-standard product never carries a rate; becoming standard (or clearing the rate)
@@ -1027,7 +1029,7 @@ export async function updateProduct(
   set("isActive", input.isActive);
   set("sales.description", input.sales?.description);
   set("purchase.description", input.purchase?.description);
-  set("purchase.preferredVendorName", input.purchase?.preferredVendorName);
+  set("purchase.preferredVendorId", input.purchase?.preferredVendorId);
   set("inventory.returnable", input.inventory?.returnable);
   if (!isService) set("inventory.trackInventory", input.inventory?.trackInventory);
   set("attributes", attributes);

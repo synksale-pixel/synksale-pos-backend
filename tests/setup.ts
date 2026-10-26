@@ -49,6 +49,10 @@ beforeAll(async () => {
   // Dynamic import so env.config.ts is first loaded AFTER MONGO_URI is set.
   const { connectDB } = await import("../src/config/db.config");
   await connectDB();
+  // Mongoose builds indexes in the background after connecting. Wait for them, or a file's first
+  // tests can run before a unique index exists (seen as six concurrent creates of one SKU all
+  // succeeding). By now the test file has imported the app, so every model is registered.
+  await Promise.all(Object.values(mongoose.models).map((model) => model.init()));
 });
 
 // afterEach (rather than beforeEach) so the DB is left clean even if a test

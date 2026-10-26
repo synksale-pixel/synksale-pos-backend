@@ -1,8 +1,8 @@
 /**
  * Purpose: Phase 3a vendor wiring that the validator unit tests cannot see: preferredVendorId
- * refused on the product form until vendors ship, the vendor:manage / purchase:read role
- * seeding and sync, the privilege ceiling for the new keys, the not-yet-built routes, and the
- * Swagger document.
+ * on the product form, the vendor:manage / purchase:read role
+ * seeding and sync, role scope rules for the new keys, and the Swagger document. The vendor
+ * endpoints themselves are covered in vendors.test.ts.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -17,7 +17,6 @@ import { generateAccessToken } from "../../src/services/auth.service";
 import { singleExample } from "../../src/docs/product.openapi";
 
 const PRODUCTS = "/api/v1/products";
-const VENDORS = "/api/v1/vendors";
 const ROLES = "/api/v1/roles";
 const VENDOR_ID = "665f1c2e8a4b3c0012ab3900";
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -68,44 +67,24 @@ const product = (purchase: Record<string, unknown>) => ({
   purchase: { costPrice: "1.600", ...purchase },
 });
 
-// Flip these when vendors ship: preferredVendorId becomes a live reference.
-describe("preferredVendorId is refused until vendors ship", () => {
-  it("refuses it on create, naming the field, and persists nothing", async () => {
+describe("preferredVendorId on the product form (vendors shipped)", () => {
+  it("refuses an unknown vendor, naming the field, and persists nothing", async () => {
     const res = await request.post(PRODUCTS).set(auth(admin)).send(product({ preferredVendorId: VENDOR_ID }));
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe("VALIDATION_FAILED");
-    expect(JSON.stringify(res.body.errors)).toContain("purchase.preferredVendorId");
+    expect(res.body.code).toBe("VENDOR_NOT_FOUND");
+    expect(res.body.errors[0]).toMatchObject({ field: "purchase.preferredVendorId", code: "VENDOR_NOT_FOUND" });
     expect(await Product.countDocuments({})).toBe(0);
   });
 
-  it("refuses null too, since clearing a reference that cannot exist yet is meaningless", async () => {
+  it("accepts null", async () => {
     const res = await request.post(PRODUCTS).set(auth(admin)).send(product({ preferredVendorId: null }));
-    expect(res.status).toBe(400);
-  });
-
-  it("refuses it on update and leaves the product unchanged", async () => {
-    const created = await request.post(PRODUCTS).set(auth(admin)).send(product({ preferredVendorName: "Gulf Roasters W.L.L." }));
-    expect(created.status).toBe(201);
-    const id = created.body.data.product._id;
-
-    const res = await request.patch(`${PRODUCTS}/${id}`).set(auth(admin)).send({ purchase: { preferredVendorId: VENDOR_ID } });
-    expect(res.status).toBe(400);
-
-    const after = await request.get(`${PRODUCTS}/${id}`).set(auth(admin));
-    expect(after.body.data.product.purchase.preferredVendorName).toBe("Gulf Roasters W.L.L.");
-  });
-
-  it("still accepts the deprecated preferredVendorName meanwhile", async () => {
-    const res = await request.post(PRODUCTS).set(auth(admin)).send(product({ preferredVendorName: "Gulf Roasters W.L.L." }));
     expect(res.status).toBe(201);
+    expect(res.body.data.product.purchase.preferredVendor).toBeNull();
   });
-});
 
-// Flip these when vendors ship.
-describe("vendor routes are not built yet", () => {
-  it("return 404", async () => {
-    expect((await request.get(VENDORS).set(auth(admin))).status).toBe(404);
-    expect((await request.post(VENDORS).set(auth(admin)).send({ name: "Al Safa" })).status).toBe(404);
+  it("rejects the removed free-text preferredVendorName as an unknown field", async () => {
+    const res = await request.post(PRODUCTS).set(auth(admin)).send(product({ preferredVendorName: "Gulf Roasters W.L.L." }));
+    expect(res.status).toBe(400);
   });
 });
 

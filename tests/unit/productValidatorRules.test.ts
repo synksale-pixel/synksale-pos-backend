@@ -295,11 +295,11 @@ describe("text, dimensions, weight and tag limits", () => {
     }
   });
 
-  it("descriptions 1000 and preferred vendor 100", () => {
+  it("descriptions 1000; the old free-text preferred vendor is gone", () => {
     expect(OK(single({ sales: { sellingPrice: "1", description: "x".repeat(1000) } }))).toBe(true);
     expectRejected(single({ sales: { sellingPrice: "1", description: "x".repeat(1001) } }), "Sales description must be at most 1000");
     expectRejected(single({ purchase: { description: "x".repeat(1001) } }), "Purchase description must be at most 1000");
-    expectRejected(single({ purchase: { preferredVendorName: "x".repeat(101) } }), "Preferred vendor must be at most 100");
+    expect(OK(single({ purchase: { preferredVendorName: "V" } }))).toBe(false);
   });
 
   it("imageUrl: http/https only (any case), max 2048, not javascript:", () => {
@@ -391,7 +391,7 @@ describe("attributes and variants (create)", () => {
 
   it("descriptions, vendor and inventory flags are still allowed on a variant item", () => {
     expect(
-      OK(variantItem({ purchase: { description: "x", preferredVendorName: "V" }, inventory: { trackInventory: false, returnable: false }, sales: { description: "d" } }))
+      OK(variantItem({ purchase: { description: "x", preferredVendorId: "665f1c2e8a4b3c0012ab3900" }, inventory: { trackInventory: false, returnable: false }, sales: { description: "d" } }))
     ).toBe(true);
   });
 });
@@ -480,7 +480,7 @@ describe("updateProductSchema", () => {
       { sales: { sellingPrice: "1.000" } },
       { sales: { description: null } },
       { purchase: { costPrice: null } },
-      { purchase: { preferredVendorName: null } },
+      { purchase: { preferredVendorId: null } },
     ]) {
       expect(updateProductSchema.safeParse(body).success, JSON.stringify(body)).toBe(true);
     }

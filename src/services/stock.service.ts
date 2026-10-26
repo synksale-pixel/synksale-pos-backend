@@ -731,7 +731,8 @@ export async function listStoreStock(organizationId: string, storeId: string, qu
       return empty;
     }
   }
-  const term = query.search?.trim();
+  // MongoDB rejects a regex containing a NUL byte (500), so drop any from the term.
+  const term = query.search?.replace(/\0/g, "").trim();
   if (term) {
     productMatch.$or = [
       { "product.nameKey": { $regex: `^${escapeRegex(term.toLowerCase())}` } },
