@@ -1276,3 +1276,99 @@ deletes of one vendor both return 200, and soft-deleted products keep a dangling
 `preferredVendorId` (reads as null). An organization role with only `vendor:manage` cannot read
 vendors (the documented read gate); seeded roles always pair it with `purchase:read`.
 New: `tests/integration/vendorReview.test.ts` (88 tests). 971 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3b contract (purchase orders: validators + Swagger, no endpoints yet)
+
+The **Purchase Orders** endpoints are documented in Swagger with a "contract preview" note and
+return 404 until implemented: `GET /purchase-orders` (cross-store list),
+`GET/POST /stores/{storeId}/purchase-orders`,
+`GET/PATCH/DELETE /stores/{storeId}/purchase-orders/{purchaseOrderId}`, and `POST …/issue`,
+`…/cancel`, `…/close`.
+
+Decisions (approved 2026-10-27, all as the tech lead recommended):
+
+1. The number (PO-00001, per organization) is given when the draft is created; deleted drafts
+   leave gaps (a PO is not a tax document).
+2. An issued PO stays editable until the first goods receipt, then it is locked.
+3. VAT is shown as an estimate; the vendor's bill (3d) has the final figure.
+4. Services are refused on POs; they go straight onto bills in 3d.
+5. Store managers (own store) and org admins create POs: new permission `purchase:order`.
+6. No line discounts in v1.
+
+- **Lifecycle:** `draft` → `issued` → `partially_received` → `received` (the last two set only
+  by goods receipts in 3c), plus `cancelled` (issued, nothing received) and `closed` (partly
+  received, the rest will not come). Drafts can be deleted (soft); nothing else can. A PO never
+  changes stock. Responses carry `editable` so the UI can show or hide Edit.
+- **Fields:** the store comes from the URL (active, fixed once created), `vendorId` (active;
+  changeable on drafts only), `orderDate` (calendar date, default today in the store's timezone),
+  `expectedDate` (on or after `orderDate`), `vendorReference` (≤50), `notes` (≤1000, printed for
+  the vendor), `lines` (1-200, each variant once: `variantId`, `quantity`, optional `unitCost`
+  defaulting to the variant's cost price, else `UNIT_COST_REQUIRED`, optional `note` ≤200).
+  PATCH replaces all lines when `lines` is sent, so clients resend every line's `unitCost` (a
+  line without one would pick up the current cost price). Inactive products/variants and untracked goods
+  are allowed; services are `VARIANT_NOT_PURCHASABLE`.
+- **Estimated VAT** per line: when the vendor is `vat_registered` and the product `standard`,
+  subtotal × the product's rate (or the organization's default); otherwise 0 (`overseas`: reverse
+  charge). Recomputed whenever the lines or vendor are saved, and again at issue. Rounded per
+  line; totals are sums.
+- **Vendor copy:** from issue, the PO shows the vendor's name, legal name, TRN and VAT treatment
+  as they were at issue; only `isActive` stays live. The estimate is recomputed against that copy
+  at issue, and edits after issue use the copied VAT treatment, so the VAT never contradicts it.
+- **Safety:** create needs an `Idempotency-Key` (same middleware as stock). Every change to an
+  existing PO sends `version` (body; query string on DELETE) and gets 409
+  `PURCHASE_ORDER_VERSION_CONFLICT` (`meta.currentVersion`) when it is stale: the first optimistic
+  concurrency check in the API. The version is checked before the status, so a retried
+  successful action (a second click on Issue) is a version conflict too: clients reload on any
+  409. A deactivated vendor blocks create and issue, not edits, cancel or
+  close of issued POs. Wrong-status actions are 409 `PURCHASE_ORDER_STATUS_CONFLICT`
+  (`meta: { status, allowed }`).
+- **Routes (changed in the tech-lead review):** everything that touches one PO is under
+  `/stores/{storeId}/…`, so `scopeToStore` verifies the store before `authorize` checks the
+  store-level permission, as for stock adjustments. A `storeId` in the body, or one resolved from
+  the PO, would have meant new authorization code (`authorize` deliberately never trusts a
+  caller-supplied store). Read, cancel and close use `scopeToStoreAllowInactive`.
+- **Reads:** `purchase:read` for the store (store role there, or an organization role). The
+  cross-store `GET /purchase-orders` takes `purchase:read` held anywhere and is narrowed to the
+  caller's stores; both lists filter by `vendorId`, `status` (comma list), `from`/`to` on
+  `orderDate` and `search` on number or vendor reference (plus `storeId` on the cross-store one).
+  Writes: `purchase:order` for the store; a deactivated store's POs can still be read, cancelled
+  and closed. No access to the store is 403 (as everywhere); a PO not in that store is 404.
+- **Delete rules (documented now, enforced with the implementation):** a vendor with any PO
+  (deleted drafts excluded) is `VENDOR_IN_USE`; a product or variant on an open PO (draft, issued,
+  partially received) is `PRODUCT_IN_USE` / `VARIANT_IN_USE`.
+- **Permissions:** `purchase:order` (store scope), seeded on org_admin and store_manager. The
+  accountant and inventory clerk keep read-only access.
+- **Error codes:** `PURCHASE_ORDER_NOT_FOUND`, `PURCHASE_ORDER_VERSION_CONFLICT`,
+  `PURCHASE_ORDER_STATUS_CONFLICT`, `VARIANT_NOT_PURCHASABLE`, `UNIT_COST_REQUIRED`, plus the
+  existing `VENDOR_NOT_FOUND`, `VENDOR_INACTIVE`, `VARIANT_NOT_FOUND`, `STORE_NOT_FOUND`, money and
+  idempotency codes.
+- The stock docs' idempotency helpers (`IDEMPOTENCY`, `REPLAY_HEADERS`, `idempotency409`,
+  `QUANTITY_RULE`) are now exported for reuse.
+
+For the implementation (from the tech-lead review, not contract changes):
+
+- Version checks as a conditional `findOneAndUpdate({ _id, version })` inside the transaction,
+  never read-then-compare.
+- PO numbers from an atomic `$inc` counter inside the create transaction, with a unique index on
+  `{ organizationId, number }`.
+- Escape the `search` prefix before building the regex.
+- Put the blocking PO number(s) in `PRODUCT_IN_USE` / `VARIANT_IN_USE` meta (a forgotten draft
+  blocks deletion, which is acceptable).
+- Decide whether a product on an open PO may switch from goods to service (refusing is simplest).
+- Vendor delete vs. PO create is claim-style from the start (the 3a plan: `findOneAndUpdate` on a
+  vendor `hasDocuments` flag), so no PO can attach to a deleted vendor. The product
+  deleted-while-a-PO-is-saved race waits for go-live, with the deferred catalog delete races.
+- 3c: a receiving permission for the inventory clerk, and what a receipt does for untracked goods.
+
+### Deploy note
+
+Run `npm run migrate` (it includes `sync:system-roles`) so existing organizations' org_admin and
+store_manager roles receive `purchase:order`.
+
+Testing: `tests/unit/purchaseOrderValidator.test.ts` pins the contract (Swagger examples parse,
+line, date, text and status-change rules, `version` handling);
+`tests/integration/purchaseOrderContract.test.ts` covers role seeding and the sync for existing
+organizations, role scope rules for the new key, the 404 preview routes and the OpenAPI document.
+994 tests pass.
