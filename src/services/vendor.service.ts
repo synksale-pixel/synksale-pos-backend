@@ -44,6 +44,13 @@ function trnRequired(): ApiError {
   ]);
 }
 
+function vendorInUse(documentCount: number): ApiError {
+  const documents = documentCount === 1 ? "1 purchase document" : `${documentCount} purchase documents`;
+  return ApiError.coded(409, "VENDOR_IN_USE", `This vendor has ${documents}. Deactivate it instead.`, [
+    { code: "VENDOR_IN_USE", meta: { documentCount } },
+  ]);
+}
+
 function isDuplicateKey(error: unknown, field: string): boolean {
   const dup = error as { code?: number; keyPattern?: Record<string, unknown> };
   return dup.code === 11000 && Boolean(dup.keyPattern?.[field]);
@@ -292,9 +299,12 @@ export async function updateVendor(organizationId: string, vendorId: string, inp
 /**
  * Soft-deletes a vendor and clears it from products' preferred vendor in the same transaction;
  * the name becomes reusable. A product saved with this vendor while the delete runs can keep a
- * dangling reference, which reads as null (accepted: it is only a hint). Phase 3b adds the
- * VENDOR_IN_USE refusal for vendors with purchase documents, claim-style so a document cannot
- * attach to a vendor being deleted.
+ * dangling reference, which reads as null (accepted: it is only a hint).
+ *
+ * A vendor with purchase documents is refused (VENDOR_IN_USE). The delete is conditional on
+ * `purchaseDocumentCount` being 0, and creating a document increments it, both inside their
+ * transactions: the two writes to this vendor conflict, so one waits for the other and no
+ * document can attach to a vendor being deleted.
  */
 export async function deleteVendor(organizationId: string, vendorId: string, actorUserId: string) {
   const vendor = await findVendorOrThrow(organizationId, vendorId);
@@ -302,7 +312,18 @@ export async function deleteVendor(organizationId: string, vendorId: string, act
   const session = await mongoose.startSession();
   try {
     await session.withTransaction(async () => {
-      await Vendor.updateOne({ _id: vendor._id, organizationId }, { $set: { isDelete: true } }, { session });
+      const deleted = await Vendor.updateOne(
+        { _id: vendor._id, organizationId, purchaseDocumentCount: { $not: { $gt: 0 } } },
+        { $set: { isDelete: true } },
+        { session }
+      );
+      if (deleted.matchedCount === 0) {
+        const current = await Vendor.findOne({ _id: vendor._id, organizationId }).session(session);
+        if (!current) {
+          throw ApiError.coded(404, "VENDOR_NOT_FOUND", "Vendor not found.", [{ field: "vendorId", code: "VENDOR_NOT_FOUND" }]);
+        }
+        throw vendorInUse(current.purchaseDocumentCount);
+      }
       await Product.updateMany(
         { organizationId, "purchase.preferredVendorId": vendor._id },
         { $set: { "purchase.preferredVendorId": null } },

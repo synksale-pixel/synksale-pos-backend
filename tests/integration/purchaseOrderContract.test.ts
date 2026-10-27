@@ -97,10 +97,15 @@ describe("purchase:order role seeding", () => {
   });
 });
 
-describe("contract preview: purchase order routes are not live yet", () => {
-  it("every documented route returns 404", async () => {
+describe("purchase order routes are live (behaviour in purchaseOrders.test.ts)", () => {
+  it("the cross-store list answers with an empty page", async () => {
+    const res = await request.get(POS).set(auth(admin));
+    expect(res.status).toBe(200);
+    expect(res.body.data.purchaseOrders).toEqual([]);
+  });
+
+  it("every store route checks the store first: an unknown store is 404 Store not found", async () => {
     const calls = [
-      request.get(POS),
       request.get(STORE_POS),
       request.post(STORE_POS).set("Idempotency-Key", "6c8e4f0e-2a7b-4d3c-9f51-0b2d7a1e9c44").send(purchaseOrderExample),
       request.get(`${STORE_POS}/${PO_ID}`),
@@ -113,6 +118,7 @@ describe("contract preview: purchase order routes are not live yet", () => {
     for (const call of calls) {
       const res = await call.set(auth(admin));
       expect(res.status).toBe(404);
+      expect(res.body.message).toBe("Store not found.");
     }
   });
 });

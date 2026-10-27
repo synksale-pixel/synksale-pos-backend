@@ -32,6 +32,7 @@ import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
 import { assertCategoryExists, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
 import { assertVendorSelectable, vendorRefs, VendorRef } from "./vendor.service";
+import { openPurchaseOrderNumbers } from "./purchaseOrder.service";
 import { recordAudit } from "./audit.service";
 import {
   prepareOpeningStock,
@@ -1079,8 +1080,28 @@ export async function setProductActive(
 }
 
 /**
+ * Refuses deleting what an open purchase order (draft, issued, partially received) still lists;
+ * `meta.purchaseOrders` names up to five of them. A PO saved with it while the delete runs is not
+ * caught (deferred with the other catalog delete races).
+ */
+async function assertNotOnOpenPurchaseOrder(
+  organizationId: string,
+  variantIds: mongoose.Types.ObjectId[],
+  code: "PRODUCT_IN_USE" | "VARIANT_IN_USE",
+  noun: "product" | "variant"
+) {
+  const numbers = await openPurchaseOrderNumbers(organizationId, variantIds);
+  if (numbers.length === 0) return;
+  const list = numbers.length === 1 ? `purchase order ${numbers[0]}` : `purchase orders ${numbers.join(", ")}`;
+  throw ApiError.coded(409, code, `This ${noun} is on open ${list}. Remove it from the order or deactivate it instead.`, [
+    { code, meta: { purchaseOrders: numbers } },
+  ]);
+}
+
+/**
  * Soft-deletes a product and its variants, releasing their SKUs and barcodes. A product whose
- * variants have stock history is refused (PRODUCT_IN_USE): deactivate it instead.
+ * variants have stock history, or are on an open purchase order, is refused (PRODUCT_IN_USE):
+ * deactivate it instead.
  */
 export async function deleteProduct(organizationId: string, productId: string, actorUserId: string) {
   const product = await findProductOrThrow(organizationId, productId);
@@ -1090,6 +1111,7 @@ export async function deleteProduct(organizationId: string, productId: string, a
   if (await hasStockMovements(organizationId, variantIds)) {
     throw ApiError.coded(409, "PRODUCT_IN_USE", "This product has stock history and can only be deactivated.");
   }
+  await assertNotOnOpenPurchaseOrder(organizationId, variantIds, "PRODUCT_IN_USE", "product");
 
   await inTransaction(async (session) => {
     product.isDelete = true;
@@ -1233,6 +1255,7 @@ export async function deleteVariant(organizationId: string, productId: string, v
   if (await hasStockMovements(organizationId, [variant._id])) {
     throw ApiError.coded(409, "VARIANT_IN_USE", "This variant has stock history and can only be deactivated.");
   }
+  await assertNotOnOpenPurchaseOrder(organizationId, [variant._id], "VARIANT_IN_USE", "variant");
 
   if (variant.isActive && (await otherActiveVariants(organizationId, product, variant._id)) === 0) {
     throw lastActiveVariant();

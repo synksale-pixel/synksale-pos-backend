@@ -33,11 +33,15 @@ export function resolvePaging(input: PaginationInput): {
   skip: number;
 } {
   // Capped: an absurd page (1e30, Infinity) would make MongoDB reject the skip with a 500.
+  // At least 1: a fraction (0.5) floors to 0, and page 0 gave a negative skip (500) while
+  // limit 0 means "no limit" to MongoDB.
   const page =
-    input.page && Number.isFinite(input.page) && input.page > 0 ? Math.min(Math.floor(input.page), MAX_PAGE) : DEFAULT_PAGE;
+    input.page && Number.isFinite(input.page) && input.page > 0
+      ? Math.min(Math.max(Math.floor(input.page), 1), MAX_PAGE)
+      : DEFAULT_PAGE;
   const limit =
     input.limit && input.limit > 0
-      ? Math.min(Math.floor(input.limit), MAX_PAGE_LIMIT)
+      ? Math.min(Math.max(Math.floor(input.limit), 1), MAX_PAGE_LIMIT)
       : DEFAULT_PAGE_LIMIT;
 
   return { page, limit, skip: (page - 1) * limit };

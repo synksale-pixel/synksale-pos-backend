@@ -37,6 +37,9 @@ import { StockMovement } from "../src/models/stockMovement.model";
 import { StockAdjustment } from "../src/models/stockAdjustment.model";
 import { StockTransfer } from "../src/models/stockTransfer.model";
 import { IdempotencyKey } from "../src/models/idempotencyKey.model";
+import { Vendor } from "../src/models/vendor.model";
+import { PurchaseOrder } from "../src/models/purchaseOrder.model";
+import { DocumentCounter } from "../src/models/documentCounter.model";
 
 const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
   Organization,
@@ -53,6 +56,9 @@ const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslin
   StockAdjustment,
   StockTransfer,
   IdempotencyKey,
+  Vendor,
+  PurchaseOrder,
+  DocumentCounter,
 ];
 
 async function run() {

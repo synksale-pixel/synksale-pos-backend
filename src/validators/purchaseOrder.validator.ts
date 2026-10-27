@@ -50,7 +50,7 @@ const optionalText = (label: string, max: number) =>
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 /** A calendar date (`YYYY-MM-DD`), with no time or timezone. */
-const isCalendarDate = (value: string) => {
+export const isCalendarDate = (value: string) => {
   if (!DATE_PATTERN.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
