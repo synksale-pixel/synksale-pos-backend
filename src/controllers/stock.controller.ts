@@ -43,8 +43,8 @@ const paging = (req: Request) => ({
   limit: queryNumber(req.query.limit),
 });
 
-/** Sends a stock write through the idempotency record and replays a retried request. */
-async function sendIdempotent(
+/** Sends a write through the idempotency record and replays a retried request (stock, purchase orders). */
+export async function sendIdempotent(
   req: Request,
   res: Response,
   message: string,

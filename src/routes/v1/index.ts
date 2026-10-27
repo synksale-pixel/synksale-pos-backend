@@ -17,6 +17,7 @@ import categoryRouter from "./category.routes";
 import productRouter from "./product.routes";
 import { storeStockRouter, stockTransferRouter } from "./stock.routes";
 import vendorRouter from "./vendor.routes";
+import { storePurchaseOrderRouter, purchaseOrderRouter } from "./purchaseOrder.routes";
 
 const v1Router = Router();
 
@@ -41,6 +42,8 @@ v1Router.use("/auth", tenantAuthRouter);
 v1Router.use("/users", userRouter);
 v1Router.use("/roles", roleRouter);
 v1Router.use("/stores", storeRouter);
+// Before the stock router: its scopeToStore refuses deactivated stores, which PO reads allow.
+v1Router.use("/stores/:storeId/purchase-orders", storePurchaseOrderRouter);
 v1Router.use("/stores/:storeId", storeStockRouter);
 v1Router.use("/organization", organizationRouter);
 v1Router.use("/tax-rates", taxRateRouter);
@@ -48,5 +51,6 @@ v1Router.use("/categories", categoryRouter);
 v1Router.use("/products", productRouter);
 v1Router.use("/stock-transfers", stockTransferRouter);
 v1Router.use("/vendors", vendorRouter);
+v1Router.use("/purchase-orders", purchaseOrderRouter);
 
 export default v1Router;

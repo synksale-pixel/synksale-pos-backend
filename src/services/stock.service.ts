@@ -90,10 +90,10 @@ function insufficientStock(errors: ApiErrorDetail[]): ApiError {
 // References for responses
 // ==========================================
 
-type StoreRef = { id: ObjectId; name: string; code: string };
-type UserRef = { id: ObjectId; name: string } | null;
+export type StoreRef = { id: ObjectId; name: string; code: string };
+export type UserRef = { id: ObjectId; name: string } | null;
 
-async function storeRefs(organizationId: string, storeIds: ObjectId[]): Promise<Map<string, StoreRef>> {
+export async function storeRefs(organizationId: string, storeIds: ObjectId[]): Promise<Map<string, StoreRef>> {
   if (storeIds.length === 0) return new Map();
   // Deleted stores still name their history.
   const stores = await Store.find({ organizationId, _id: { $in: storeIds }, isDelete: { $in: [true, false] } }).select(
@@ -102,7 +102,7 @@ async function storeRefs(organizationId: string, storeIds: ObjectId[]): Promise<
   return new Map(stores.map((store) => [store._id.toString(), { id: store._id, name: store.name, code: store.code }]));
 }
 
-async function userRefs(organizationId: string, userIds: (ObjectId | null)[]): Promise<Map<string, UserRef>> {
+export async function userRefs(organizationId: string, userIds: (ObjectId | null)[]): Promise<Map<string, UserRef>> {
   const ids = userIds.filter((id): id is ObjectId => Boolean(id));
   if (ids.length === 0) return new Map();
   const users = await User.find({ organizationId, _id: { $in: ids }, isDelete: { $in: [true, false] } }).select(
@@ -113,13 +113,13 @@ async function userRefs(organizationId: string, userIds: (ObjectId | null)[]): P
   );
 }
 
-interface CatalogRefs {
+export interface CatalogRefs {
   variant(id: ObjectId): { id: ObjectId; name: string; sku: string | null };
   product(id: ObjectId): { id: ObjectId; name: string; unit: string };
 }
 
 /** Variant and product names for history rows, including deleted ones. */
-async function catalogRefs(organizationId: string, variantIds: ObjectId[], productIds: ObjectId[]): Promise<CatalogRefs> {
+export async function catalogRefs(organizationId: string, variantIds: ObjectId[], productIds: ObjectId[]): Promise<CatalogRefs> {
   const anyState = { $in: [true, false] };
   const [variants, products] = await Promise.all([
     variantIds.length

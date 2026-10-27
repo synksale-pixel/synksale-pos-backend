@@ -26,8 +26,6 @@ const orgBase = `${API}/purchase-orders`;
 const storeBase = `${API}/stores/{storeId}/purchase-orders`;
 const poPath = `${storeBase}/{purchaseOrderId}`;
 
-const PREVIEW =
-  "**Contract preview (Phase 3b):** documented for frontend review; returns 404 until implemented.";
 
 const storeIdParam = z.object({
   storeId: z.string().openapi({ description: "Store ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3400" }),
@@ -133,8 +131,6 @@ const STORE_404_LINE = "- The store does not exist in your organization (or is d
 
 const notFound404 = errorResponse(
   [
-    `${PREVIEW}`,
-    "",
     "Not found:",
     STORE_404_LINE,
     "- `PURCHASE_ORDER_NOT_FOUND`: no PO with this id in this store (another store's or organization's PO, or a deleted draft, look the same).",
@@ -144,7 +140,7 @@ const notFound404 = errorResponse(
   "PURCHASE_ORDER_NOT_FOUND"
 );
 
-const store404 = errorResponse(`${PREVIEW}\n\n${STORE_404_LINE}`, "Store not found.", 404);
+const store404 = errorResponse(STORE_404_LINE, "Store not found.", 404);
 
 const LIST_RULES = [
   "Paginated, newest PO number first. For “awaiting goods” send `status=issued,partially_received`.",
@@ -187,8 +183,6 @@ registry.registerPath({
   tags,
   summary: "List purchase orders across stores",
   description: [
-    PREVIEW,
-    "",
     listNote,
     "",
     LIST_RULES,
@@ -212,8 +206,6 @@ registry.registerPath({
   tags,
   summary: "List a store's purchase orders",
   description: [
-    PREVIEW,
-    "",
     readNote,
     "",
     "The same list for this store only (a `storeId` query filter is ignored here).",
@@ -240,7 +232,7 @@ registry.registerPath({
   path: poPath,
   tags,
   summary: "Get a purchase order",
-  description: [PREVIEW, "", readNote, "", LIFECYCLE].join("\n"),
+  description: [readNote, "", LIFECYCLE].join("\n"),
   security,
   request: { params: poParams },
   responses: {
@@ -263,8 +255,6 @@ registry.registerPath({
   tags,
   summary: "Create a purchase order (draft)",
   description: [
-    PREVIEW,
-    "",
     writeNote("create a PO for it"),
     "",
     "Creates a **draft** for this store and gives it its number (PO-00001, PO-00002…, per organization). Issue it when it is ready to send.",
@@ -328,8 +318,6 @@ registry.registerPath({
   tags,
   summary: "Edit a purchase order",
   description: [
-    PREVIEW,
-    "",
     writeNote("edit it"),
     "",
     "Allowed while `editable` is true: a **draft**, or an **issued** PO with nothing received yet. Send only the fields to change (plus `version`); null clears `expectedDate`, `vendorReference` or `notes`.",
@@ -372,7 +360,7 @@ registry.registerPath({
       [
         "Bad request. Codes:",
         "- `VALIDATION_FAILED`: a schema rule, a missing `version`, nothing to change, `expectedDate` before `orderDate` (stored values count), or `vendorId` sent for an issued PO.",
-        "- `VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`: checked only when `vendorId` is sent (`errors[0].field` is `vendorId`). The stored vendor being deactivated later never blocks an edit.",
+        "- `VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`: checked only when `vendorId` changes the vendor (`errors[0].field` is `vendorId`). Sending the PO's own vendor again is no change, so the stored vendor being deactivated later never blocks an edit.",
         ...LINE_CODES,
         "- A malformed `purchaseOrderId` in the path also returns 400 (no `code`).",
       ].join("\n"),
@@ -394,8 +382,6 @@ registry.registerPath({
   tags,
   summary: "Delete a draft purchase order",
   description: [
-    PREVIEW,
-    "",
     writeNote("delete it"),
     "",
     "Drafts only. Its number is not reused, so numbering has a gap. An issued PO cannot be deleted: cancel it instead.",
@@ -425,8 +411,6 @@ registry.registerPath({
   tags,
   summary: "Issue a purchase order",
   description: [
-    PREVIEW,
-    "",
     writeNote("issue it"),
     "",
     "Moves a **draft** to **issued**: the PO is final enough to send to the vendor, and goods can be received against it (Phase 3c).",
@@ -461,8 +445,6 @@ registry.registerPath({
   tags,
   summary: "Cancel a purchase order",
   description: [
-    PREVIEW,
-    "",
     writeNote("cancel it"),
     "",
     "For an **issued** PO with **nothing received**: it becomes **cancelled** (final). A draft is deleted instead; a PO with goods received is closed instead. An optional `reason` is kept on the PO. Works for a deactivated store's POs too.",
@@ -499,8 +481,6 @@ registry.registerPath({
   tags,
   summary: "Close a partly received purchase order",
   description: [
-    PREVIEW,
-    "",
     writeNote("close it"),
     "",
     "For a **partially_received** PO whose remaining goods will not come: it becomes **closed** (final) and stops counting as awaiting goods. Lines keep what was received. Only reachable once goods receipts ship (Phase 3c). An optional `reason` is kept on the PO. Works for a deactivated store's POs too.",

@@ -39,6 +39,12 @@ export interface IVendor {
   paymentTermsDays: number;
   notes: string | null;
   isActive: boolean;
+  /**
+   * Purchase documents naming this vendor (deleted drafts excluded). Creating a document
+   * increments it and deleting the vendor requires 0, both as writes to this vendor inside their
+   * transactions, so MongoDB serialises them: a document can never attach to a deleted vendor.
+   */
+  purchaseDocumentCount: number;
   isDelete: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -104,6 +110,11 @@ const vendorSchema = new Schema<IVendor, VendorModel>(
       type: Boolean,
       default: true,
     },
+    purchaseDocumentCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,
@@ -132,6 +143,7 @@ const cleanTransform = (_doc: any, ret: any) => {
   delete ret.__v;
   delete ret.nameKey;
   delete ret.phoneKey;
+  delete ret.purchaseDocumentCount;
   return ret;
 };
 

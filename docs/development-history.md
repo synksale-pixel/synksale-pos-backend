@@ -1372,3 +1372,88 @@ line, date, text and status-change rules, `version` handling);
 `tests/integration/purchaseOrderContract.test.ts` covers role seeding and the sync for existing
 organizations, role scope rules for the new key, the 404 preview routes and the OpenAPI document.
 994 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3b implementation (purchase orders)
+
+The Purchase Orders endpoints are live behind the Phase 3b contract.
+
+- **Models:** `PurchaseOrder` (organization + store scoped, soft delete for drafts) keeps lines
+  with their tax as estimated (`taxPreference`, a copy of the rate used), money in minor units and
+  quantities in thousandths, `version`, `vendorSnapshot` (null until issue) and the
+  `issued` / `cancelled` / `closed` events. `sequence` (the number as an integer) orders the
+  lists, since `PO-100000` sorts before `PO-99999` as text. `DocumentCounter` gives out numbers
+  per organization and document type with an atomic `$inc` inside the create transaction; unique
+  `{ organizationId, number }` backs it. (Its field is `type`, not `key`: idempotency.service reads
+  a duplicate on a `key` index as an Idempotency-Key race.)
+- **Concurrency:** every change to an existing PO is one `findOneAndUpdate` on
+  `{ _id, version, status }` with `$inc: { version: 1 }`. When it matches nothing the PO is read
+  again to say why, version first. Create runs through `runIdempotent` like stock writes.
+- **Vendor in use:** `Vendor.purchaseDocumentCount` goes up when a PO is created (the claim also
+  requires an active vendor) and down when a draft is deleted or a draft's vendor changes, in the
+  same transaction as the PO write. Vendor delete is conditional on the count being 0. Both are
+  writes to the vendor document inside transactions, so a concurrent create and delete serialise:
+  a PO can never attach to a deleted vendor. Existing vendors have no count, which reads as 0.
+- **VAT estimate:** per line, the product's rate (or the organization's default) when the vendor
+  is `vat_registered` and the product `standard`, otherwise none. Drafts use the vendor's current
+  treatment; issued POs use the copy. Recomputed when lines or the vendor change, and at issue
+  (with the products' current tax settings).
+- **Routes:** `/stores/:storeId/purchase-orders` is mounted before the store stock router, whose
+  `scopeToStore` would otherwise refuse a deactivated store before the PO router's
+  `scopeToStoreAllowInactive` ran. Reads, cancel and close allow a deactivated store; create,
+  edit, delete and issue do not.
+- **Today** for the default `orderDate` is the store's timezone (`todayIn`).
+- **Catalog:** product and variant delete refuse while on an open PO (`PRODUCT_IN_USE` /
+  `VARIANT_IN_USE`, `meta.purchaseOrders` with up to five numbers), after the stock-history check.
+  Lines of closed or cancelled POs keep naming a deleted product.
+- `stock.service` exports its reference helpers (`storeRefs`, `userRefs`, `catalogRefs`) and
+  `stock.controller` its `sendIdempotent`, so purchase orders reuse them.
+- **Index sync fix:** `scripts/syncIndexes.ts` did not list `Vendor`, so in production (autoIndex
+  off) the vendor-name uniqueness index from 3a was never built. `Vendor`, `PurchaseOrder` and
+  `DocumentCounter` are now listed.
+
+### Deploy note
+
+Run `npm run migrate`: it builds the vendor, purchase order and counter indexes. If two vendors in
+one organization already share a name (possible while the index was missing), the vendor index
+build fails: rename one and run it again.
+
+Testing: `tests/integration/purchaseOrders.test.ts` (create, numbering including concurrent
+creates, pricing and VAT for each vendor treatment and tax preference, rounding, line error
+collection, idempotency, edits and version conflicts including concurrent edits, issue with the
+vendor copy and re-estimate, cancel, close, delete, lists and filters, permissions per role,
+a deactivated store, tenant isolation, vendor and product delete rules including a concurrent
+vendor delete). `purchaseOrderContract.test.ts` was flipped to the live routes.
+
+### pos-tester review
+
+Fixed:
+
+- `resolvePaging` floored a fractional `page` or `limit` below 1 to 0: `?page=0.5` gave a negative
+  skip (500) and `?limit=0.5` meant "no limit" to MongoDB (every row, `totalPages` Infinity). Both
+  are now at least 1. This affected every paginated list, not only purchase orders.
+- Sending a draft's own vendor again (an edit form resent whole) was refused with
+  `VENDOR_INACTIVE` once that vendor had been deactivated. It is now no change; only a different
+  vendor is checked.
+
+Reviewed and holding: every response against its strict Zod schema (no internal fields), the
+vendor document count under failed creates, aborted transactions and races, numbering under ten
+simultaneous first creates, VAT rounding and rate fallbacks, version-before-status on every
+action, store and organization isolation (including the narrowed cross-store list), idempotency
+per organization, hostile query, path and body input, `DELETE ?version=` parsing, the
+deactivated-store rules with the router order (stock routes stay closed), and the product delete
+rule. New: `tests/integration/purchaseOrderReview.test.ts` (44 tests). 1088 tests pass.
+
+Known and accepted (notes for 3c):
+
+- Issue and PATCH rebuild the lines, so line ids are not stable until the PO is locked; receipts
+  (3c) refer to them only after that.
+- A product's unit can change while a draft holds a fractional quantity (`UNIT_LOCKED` checks only
+  stock movements): receipts must check whole units again.
+- The loser of a delete-versus-edit or delete-versus-issue race gets 404 (the draft is gone)
+  rather than 409. Issue reads the vendor outside the write, so a vendor deactivated in that
+  instant can still be issued to.
+- An unrecognised `status`, `from` or `to` is ignored, while a malformed `vendorId` or `storeId`
+  matches nothing (as on the stock lists).
+- The product-delete-versus-PO-save race stays deferred to go-live.
