@@ -57,7 +57,7 @@ const DATE_RULE =
 const COST_VISIBILITY =
   "Cost figures (`averageCost`, `stockValue`) need **`inventory:read`** for this store as well; without it they are `null` and quantities are still shown.";
 
-const IDEMPOTENCY = [
+export const IDEMPOTENCY = [
   "**Idempotency** (`Idempotency-Key` header, required)",
   "- Generate one key (a UUID) when the user presses Save, and reuse it for every retry of that same action.",
   "- Same key and same body within 24 hours: the original response is returned again (same status and body) with the header `Idempotent-Replayed: true`. Nothing is applied twice.",
@@ -66,7 +66,7 @@ const IDEMPOTENCY = [
   "- Only successful responses are remembered: after a 4xx/5xx, fix the request and retry with the same key.",
 ].join("\n");
 
-const REPLAY_HEADERS = {
+export const REPLAY_HEADERS = {
   "Idempotent-Replayed": {
     description:
       "Present with value `true` only when this is the stored response to an earlier request with the same `Idempotency-Key` (nothing was applied again).",
@@ -74,13 +74,13 @@ const REPLAY_HEADERS = {
   },
 };
 
-const QUANTITY_RULE =
+export const QUANTITY_RULE =
   "Quantities are numbers: whole unless the product's unit is kg, g, L, mL, m or cm (up to 3 decimals).";
 
 const COST_RULE =
   "Costs are VAT-exclusive decimal strings at the organization's currency decimals, valued at **weighted average cost per store**: removing stock uses the current average (the average does not change); adding stock at a `unitCost` recalculates it. When the store's stock is 0 or negative before stock is added, the average becomes that `unitCost`.";
 
-const idempotency409 = (extra: string[], example: { message: string; code: string; errors?: unknown[] }) =>
+export const idempotency409 = (extra: string[], example: { message: string; code: string; errors?: unknown[] }) =>
   errorResponse(
     [
       "Conflict. Codes:",

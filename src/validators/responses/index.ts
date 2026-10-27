@@ -947,3 +947,128 @@ export const VendorListDataSchema = z
     pagination: PaginationSchema,
   })
   .openapi("VendorListData");
+
+// ---------- Purchase orders (Phase 3b) ----------
+
+const STATUS_LIST =
+  "`draft`, `issued`, `partially_received`, `received`, `cancelled` or `closed`. Read it as an open-ended string: later phases may add values (e.g. approvals).";
+
+const PurchaseOrderVendorSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3900"),
+    name: z.string().openapi({ example: "Gulf Roasters W.L.L." }),
+    legalName: z.string().nullable().openapi({ example: "Gulf Roasters Trading W.L.L." }),
+    taxRegistrationNumber: z.string().nullable().openapi({ example: "220000987600003" }),
+    vatTreatment: z.string().openapi({ description: "As on the vendor; open-ended.", example: "vat_registered" }),
+    isActive: z.boolean().openapi({ description: "The vendor's current status (never a copy).", example: true }),
+  })
+  .openapi("PurchaseOrderVendor", {
+    description:
+      "While a draft, the vendor's current details. From issue on, a copy taken at issue, so later vendor edits do not change the PO; only `isActive` stays live.",
+  });
+
+const PurchaseOrderUserRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3500"),
+    name: z.string().openapi({ example: "Fatima Al Khalifa" }),
+  })
+  .openapi("PurchaseOrderUserRef");
+
+const purchaseOrderCore = {
+  id: objectId("665f1c2e8a4b3c0012ab3c00"),
+  number: z.string().openapi({
+    description: "Per organization, given when the draft is created: PO-00001, PO-00002… (more digits after PO-99999). Deleted drafts leave gaps.",
+    example: "PO-00012",
+  }),
+  status: z.string().openapi({ description: STATUS_LIST, example: "issued" }),
+  store: StockStoreRefSchema,
+  vendor: PurchaseOrderVendorSchema,
+  orderDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-10-27" }),
+  expectedDate: z.string().nullable().openapi({ description: "YYYY-MM-DD.", example: "2026-11-03" }),
+  vendorReference: z.string().nullable().openapi({ example: "Q-2026-118" }),
+  subtotal: money("38.400", "Sum of the lines' `subtotal`, VAT-exclusive."),
+  estimatedTax: money("3.840", "Sum of the lines' `estimatedTax`. An estimate: the vendor's bill (Phase 3d) has the final VAT."),
+  estimatedTotal: money("42.240", "subtotal + estimatedTax."),
+  version: z.number().int().openapi({
+    description: "Goes up by one on every change. Send it back on PATCH, issue, cancel, close and delete.",
+    example: 3,
+  }),
+  createdBy: PurchaseOrderUserRefSchema,
+  createdAt: isoDate("2026-10-27T07:30:00.000Z"),
+  updatedAt: isoDate("2026-10-27T08:10:00.000Z"),
+};
+
+export const PurchaseOrderSummarySchema = z
+  .object({
+    ...purchaseOrderCore,
+    lineCount: z.number().int().openapi({ example: 2 }),
+  })
+  .openapi("PurchaseOrderSummary");
+
+export const PurchaseOrderLineSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3c01", "Line id. Goods receipts (Phase 3c) refer to it."),
+    variant: StockVariantRefSchema,
+    product: StockProductRefSchema,
+    quantity: quantity(24, "Ordered."),
+    receivedQuantity: quantity(0, "Received so far through goods receipts (Phase 3c). Can exceed `quantity` when the vendor over-delivers."),
+    unitCost: money("1.600", "VAT-exclusive cost per unit."),
+    subtotal: money("38.400", "quantity × unitCost, rounded to the currency's decimals."),
+    tax: z
+      .object({
+        taxPreference: z.string().openapi({
+          description: "The product's: `standard`, `zero_rated`, `exempt` or `out_of_scope` (open-ended).",
+          example: "standard",
+        }),
+        taxRate: z
+          .object({
+            id: objectId("665f1c2e8a4b3c0012ab3600"),
+            name: z.string().openapi({ example: "VAT 10%" }),
+            rate: z.number().openapi({ description: "Percent.", example: 10 }),
+          })
+          .nullable()
+          .openapi({ description: "The rate used for the estimate; null when no VAT is estimated." }),
+        estimatedTax: money("3.840", "subtotal × rate, rounded. 0 when the vendor is not `vat_registered` or the product is not `standard`."),
+      })
+      .openapi({ description: "Worked out from the product's tax settings and the vendor's VAT treatment each time the lines are saved." }),
+    total: money("42.240", "subtotal + estimatedTax."),
+    note: z.string().nullable().openapi({ example: "Vendor code GR-250" }),
+  })
+  .openapi("PurchaseOrderLine");
+
+const statusEvent = (description: string) =>
+  z
+    .object({
+      at: isoDate("2026-10-27T08:10:00.000Z"),
+      by: PurchaseOrderUserRefSchema,
+    })
+    .nullable()
+    .openapi({ description });
+
+export const PurchaseOrderSchema = z
+  .object({
+    ...purchaseOrderCore,
+    notes: z.string().nullable().openapi({ example: "Deliver to the back entrance before 10am." }),
+    lines: z.array(PurchaseOrderLineSchema),
+    issued: statusEvent("When and by whom it was issued; null while a draft."),
+    cancelled: statusEvent("null unless cancelled."),
+    closed: statusEvent("null unless closed."),
+    statusReason: z.string().nullable().openapi({
+      description: "The reason given when it was cancelled or closed.",
+      example: null as unknown as string,
+    }),
+    editable: z.boolean().openapi({
+      description: "true for a draft, or an issued PO with nothing received yet. Use it to show or hide Edit.",
+      example: true,
+    }),
+  })
+  .openapi("PurchaseOrder");
+
+export const PurchaseOrderDataSchema = z.object({ purchaseOrder: PurchaseOrderSchema }).openapi("PurchaseOrderData");
+
+export const PurchaseOrderListDataSchema = z
+  .object({
+    purchaseOrders: z.array(PurchaseOrderSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("PurchaseOrderListData");

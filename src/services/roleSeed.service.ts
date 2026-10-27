@@ -43,6 +43,8 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "inventory:read",
       "inventory:adjust",
       "purchase:read",
+      // Orders stock for their own store (Phase 3b).
+      "purchase:order",
       "report:view_store",
       "store:configure",
       // A store manager staffs their own store. The privilege ceiling in canGrantRole still

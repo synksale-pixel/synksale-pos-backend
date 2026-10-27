@@ -14,5 +14,6 @@ import "./category.openapi";
 import "./product.openapi";
 import "./stock.openapi";
 import "./vendor.openapi";
+import "./purchaseOrder.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";

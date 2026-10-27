@@ -22,6 +22,7 @@ export type PermissionKey =
   // Purchases
   | "vendor:manage"
   | "purchase:read"
+  | "purchase:order"
   // Reports
   | "report:view_store"
   | "report:view_org"
@@ -133,6 +134,13 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     // receive goods need it to pick the vendor.
     key: "purchase:read",
     label: "View Vendors and Purchases",
+    category: "Purchases",
+    minScope: "store",
+  },
+  {
+    // A purchase order belongs to one store, so a store manager can order for their own store.
+    key: "purchase:order",
+    label: "Create/Modify Purchase Orders",
     category: "Purchases",
     minScope: "store",
   },
