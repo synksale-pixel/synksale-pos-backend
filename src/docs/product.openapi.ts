@@ -437,7 +437,7 @@ registry.registerPath({
   path: `${base}/{productId}`,
   tags,
   summary: "Delete a product",
-  description: `${writeNote("product:delete")}\n\nSoft delete of the product and all its variants; their SKUs and barcodes become reusable, and the product no longer counts toward its category's \`productCount\`, the tax rate's in-use check or the organization's currency lock. A product whose variants have any stock movement, or are on an open purchase order (draft, issued or partially received), cannot be deleted (\`PRODUCT_IN_USE\`, 409); deactivate it instead.`,
+  description: `${writeNote("product:delete")}\n\nSoft delete of the product and all its variants; their SKUs and barcodes become reusable, and the product no longer counts toward its category's \`productCount\`, the tax rate's in-use check or the organization's currency lock. A product whose variants have any stock movement, or are on an open purchase order (draft, issued or partially received) or any goods receipt (from Phase 3c; this covers goods that do not track inventory), cannot be deleted (\`PRODUCT_IN_USE\`, 409); deactivate it instead.`,
   security,
   request: { params: productIdParam },
   responses: {
@@ -449,7 +449,7 @@ registry.registerPath({
     401: TENANT_AUTH_401,
     403: write403,
     404: productNotFound,
-    409: errorResponse(`A variant of the product has stock movements or is on an open purchase order (\`errors[0].meta.purchaseOrders\` lists up to five PO numbers). Code \`PRODUCT_IN_USE\`.`, "This product has stock history and can only be deactivated.", 409, "PRODUCT_IN_USE"),
+    409: errorResponse(`A variant of the product has stock movements, is on an open purchase order (\`errors[0].meta.purchaseOrders\` lists up to five PO numbers) or is on a goods receipt (from Phase 3c). Code \`PRODUCT_IN_USE\`.`, "This product has stock history and can only be deactivated.", 409, "PRODUCT_IN_USE"),
     500: server500,
   },
 });
@@ -537,7 +537,7 @@ registry.registerPath({
   path: `${base}/{productId}/variants/{variantId}`,
   tags,
   summary: "Delete a variant",
-  description: `${writeNote("product:update")}\n\nVariant items only (\`PRODUCT_NOT_VARIANT_ITEM\`, 400 otherwise). Soft delete; its SKU and barcodes become reusable. The last active variant cannot be deleted (\`LAST_ACTIVE_VARIANT\`, 409); an inactive variant can be deleted unless it is in use. A variant with stock movements, or on an open purchase order, cannot be deleted (\`VARIANT_IN_USE\`, 409); deactivate it instead. Returns the whole product.`,
+  description: `${writeNote("product:update")}\n\nVariant items only (\`PRODUCT_NOT_VARIANT_ITEM\`, 400 otherwise). Soft delete; its SKU and barcodes become reusable. The last active variant cannot be deleted (\`LAST_ACTIVE_VARIANT\`, 409); an inactive variant can be deleted unless it is in use. A variant with stock movements, on an open purchase order or on any goods receipt (from Phase 3c), cannot be deleted (\`VARIANT_IN_USE\`, 409); deactivate it instead. Returns the whole product.`,
   security,
   request: { params: variantParams },
   responses: {
@@ -553,7 +553,7 @@ registry.registerPath({
       [
         "Conflict. Codes:",
         "- `LAST_ACTIVE_VARIANT`: the variant is the product's only active one; deactivate the product instead.",
-        `- \`VARIANT_IN_USE\`: the variant has stock movements or is on an open purchase order (\`errors[0].meta.purchaseOrders\` lists up to five PO numbers); deactivate it instead.`,
+        `- \`VARIANT_IN_USE\`: the variant has stock movements, is on an open purchase order (\`errors[0].meta.purchaseOrders\` lists up to five PO numbers) or is on a goods receipt (from Phase 3c); deactivate it instead.`,
       ].join("\n"),
       "A product must keep at least one active variant. Deactivate the product instead.",
       409,

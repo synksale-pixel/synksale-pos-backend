@@ -52,11 +52,11 @@ export const REASON_RULES: Record<AdjustmentReason, { direction: "remove" | "add
 };
 
 /**
- * Movement types written in Phase 2 (`opening` comes from product opening stock and from
- * `opening_balance` adjustments). Purchases and sales will add `purchase`, `purchase_return`,
- * `sale` and `sale_return`; clients must tolerate types they do not know.
+ * Movement types (`opening` comes from product opening stock and from `opening_balance`
+ * adjustments; `purchase` from goods receipts, Phase 3c). Later phases will add
+ * `purchase_return`, `sale` and `sale_return`; clients must tolerate types they do not know.
  */
-export const MOVEMENT_TYPES = ["opening", "adjustment", "transfer_out", "transfer_in"] as const;
+export const MOVEMENT_TYPES = ["opening", "adjustment", "transfer_out", "transfer_in", "purchase"] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
 const MAX_LINES = 200;

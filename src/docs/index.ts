@@ -15,5 +15,6 @@ import "./product.openapi";
 import "./stock.openapi";
 import "./vendor.openapi";
 import "./purchaseOrder.openapi";
+import "./goodsReceipt.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";

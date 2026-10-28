@@ -23,6 +23,7 @@ export type PermissionKey =
   | "vendor:manage"
   | "purchase:read"
   | "purchase:order"
+  | "purchase:receive"
   // Reports
   | "report:view_store"
   | "report:view_org"
@@ -141,6 +142,14 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     // A purchase order belongs to one store, so a store manager can order for their own store.
     key: "purchase:order",
     label: "Create/Modify Purchase Orders",
+    category: "Purchases",
+    minScope: "store",
+  },
+  {
+    // Goods arrive at one store, so receiving is a store job (inventory clerks). Changing a
+    // received cost or receiving without a PO also needs purchase:order.
+    key: "purchase:receive",
+    label: "Receive Goods",
     category: "Purchases",
     minScope: "store",
   },

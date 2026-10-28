@@ -1457,3 +1457,78 @@ Known and accepted (notes for 3c):
 - An unrecognised `status`, `from` or `to` is ignored, while a malformed `vendorId` or `storeId`
   matches nothing (as on the stock lists).
 - The product-delete-versus-PO-save race stays deferred to go-live.
+
+---
+
+## 🧾 Purchases — Phase 3c contract (goods receipts: validators + Swagger, no endpoints yet)
+
+The **Goods Receipts** endpoints are documented in Swagger with a "contract preview" note and
+return 404 until implemented: `GET /goods-receipts` (cross-store list),
+`GET/POST /stores/{storeId}/goods-receipts` and `GET /stores/{storeId}/goods-receipts/{goodsReceiptId}`.
+There is no PATCH or DELETE: receipts are final.
+
+Decisions (approved 2026-10-28, all as the tech lead recommended):
+
+1. Posted on create: no drafts. One call adds the stock and is final.
+2. Any number of receipts per PO; the PO becomes `partially_received` / `received` from the line
+   totals. Only `issued` and `partially_received` POs can be received.
+3. No over-receipt (no tolerance in v1); extra goods go on a receipt without a PO.
+4. Receipts without a PO: an active vendor and a `unitCost` on every line. Each receipt counts
+   towards the vendor's documents (`VENDOR_IN_USE`).
+5. Always the PO's store; routes under `/stores/{storeId}/goods-receipts` plus a cross-store list.
+6. `unitCost` defaults to the PO line's and can be changed per line. VAT-exclusive weighted
+   average, except an organization with no TRN adds input VAT to the stock cost. No landed cost.
+   A different bill in 3d does not revalue stock. A variant-level `lastPurchase` is kept;
+   `costPrice` is never changed.
+7. Lines refer to `purchaseOrderLineId`; no PO `version` is sent, so simultaneous receipts do not
+   block each other. A line id no longer on the PO is 409 `PURCHASE_ORDER_CHANGED`. The receipt
+   bumps the PO's `version`, which locks it against an edit in progress.
+8. `Idempotency-Key` required.
+9. Numbered GRN-00001 per organization. New movement type `purchase`, source type `goods_receipt`.
+10. Untracked goods are allowed and recorded (`stocked: false`) without a movement; product and
+    variant delete must therefore also look at receipts.
+11. Whole units are checked again at receipt.
+12. `receivedDate` defaults to today in the store's timezone, cannot be in the future (or before
+    the PO's `orderDate`); movements are dated at posting.
+13. New permission `purchase:receive` (store scope) on org_admin, store_manager and
+    inventory_clerk. A changed `unitCost` or a receipt without a PO also needs `purchase:order`.
+14. No void: fix mistakes with an adjustment (or a 3e return).
+
+- **Create body:** either `purchaseOrderId` (lines send `purchaseOrderLineId`, optional `unitCost`)
+  or `vendorId` (lines send `variantId` and `unitCost`); plus optional `receivedDate`,
+  `vendorReference` (≤50, the delivery note or invoice number), `notes` (≤1000), line `note`
+  (≤200). 1-200 lines, each PO line / variant once. The validator enforces the either/or shape.
+- **Response:** the receipt (vendor copy, PO ref, lines with `unitCost`, `subtotal`,
+  `stockUnitCost`, `stockValue`, `stocked`, `quantityAfter`) and, on create against a PO, the
+  updated PO so the screen can refresh without another call.
+- **Costs are visible to `purchase:read`,** the same as on POs (changed from the tech-lead note to
+  hide them without `inventory:read`: an inventory clerk already sees the same costs on the PO).
+- **Error codes:** new `GOODS_RECEIPT_NOT_FOUND`, `PURCHASE_ORDER_CHANGED`,
+  `RECEIVED_QUANTITY_EXCEEDS_ORDERED` (`meta: { ordered, received, remaining }`), plus the existing
+  PO, vendor, variant, money and idempotency codes.
+- **Other contract changes:** `PurchaseOrderLine.receivedQuantity` can no longer exceed
+  `quantity`; `ProductVariant.lastPurchase` (optional while this is a preview, always present
+  once receipts ship); `StockMovement` documents `purchase` / `goods_receipt`; product and
+  variant delete docs add the goods-receipt in-use rule.
+
+For the implementation:
+
+- One `runStockTransaction`: re-read the PO with the session, check line ids and remaining
+  quantities, conditional PO update (`receivedQuantityMilli`, status, `version + 1`), insert the
+  receipt (number from the `DocumentCounter`), `applyMovement` per stocked line, update the
+  variants' `lastPurchase`, `$inc` the vendor's `purchaseDocumentCount` for receipts without a PO.
+- The `purchase:order` check for cost changes and no-PO receipts happens in the service (403 with
+  `errors[0].field`), since it depends on the body.
+- Make `ProductVariant.lastPurchase` required in the response schema.
+- Add receipts to `syncIndexes`.
+
+### Deploy note
+
+Run `npm run migrate` (it includes `sync:system-roles`) so existing organizations' org_admin,
+store_manager and inventory_clerk roles receive `purchase:receive`.
+
+Testing: `tests/unit/goodsReceiptValidator.test.ts` pins the contract (Swagger examples parse,
+the against-PO / without-PO line shapes, duplicates, quantities, costs, dates, text limits);
+`tests/integration/goodsReceiptContract.test.ts` covers role seeding and the sync for existing
+organizations, role scope rules for the new key, the 404 preview routes and the OpenAPI document.
+1111 tests pass.
