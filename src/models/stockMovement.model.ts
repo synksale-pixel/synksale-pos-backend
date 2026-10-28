@@ -15,13 +15,13 @@ import { MOVEMENT_TYPES, MovementType } from "../validators/stock.validator";
 export { MOVEMENT_TYPES };
 export type { MovementType };
 
-export const MOVEMENT_SOURCE_TYPES = ["product", "adjustment", "transfer"] as const;
+export const MOVEMENT_SOURCE_TYPES = ["product", "adjustment", "transfer", "goods_receipt"] as const;
 export type MovementSourceType = (typeof MOVEMENT_SOURCE_TYPES)[number];
 
 export interface IMovementSource {
   type: MovementSourceType;
   id: mongoose.Types.ObjectId;
-  /** The source document's display number, when it has one (none in Phase 2). */
+  /** The source document's display number, when it has one (GRN-00001 for a goods receipt). */
   number: string | null;
 }
 

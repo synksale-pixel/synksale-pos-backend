@@ -43,8 +43,9 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "inventory:read",
       "inventory:adjust",
       "purchase:read",
-      // Orders stock for their own store (Phase 3b).
+      // Orders stock for their own store (Phase 3b) and receives it (Phase 3c).
       "purchase:order",
+      "purchase:receive",
       "report:view_store",
       "store:configure",
       // A store manager staffs their own store. The privilege ceiling in canGrantRole still
@@ -80,7 +81,8 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
     slug: "inventory_clerk",
     name: "Inventory Clerk",
     scope: "store",
-    permissions: ["product:read", "inventory:read", "inventory:adjust", "purchase:read"],
+    // purchase:receive: books deliveries against POs at the PO's costs (Phase 3c).
+    permissions: ["product:read", "inventory:read", "inventory:adjust", "purchase:read", "purchase:receive"],
   },
 ];
 

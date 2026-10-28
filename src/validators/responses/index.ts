@@ -536,6 +536,26 @@ export const ProductVariantSchema = z
       "2.750",
       "VAT-exclusive. null when the variant has no cost price, and for callers who hold neither `inventory:read` nor a product create/update/delete permission (e.g. cashiers): treat null as not visible, not as no cost."
     ).nullable(),
+    lastPurchase: z
+      .object({
+        unitCost: money("1.600", "VAT-exclusive, as on the receipt."),
+        receivedDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-10-28" }),
+        vendor: z.object({
+          id: objectId("665f1c2e8a4b3c0012ab3900"),
+          name: z.string().openapi({ example: "Gulf Roasters W.L.L." }),
+        }),
+        goodsReceipt: z.object({
+          id: objectId("665f1c2e8a4b3c0012ab3d00"),
+          number: z.string().openapi({ example: "GRN-00007" }),
+        }),
+      })
+      .nullable()
+      // Optional only while Phase 3c is a contract preview; always present once receipts ship.
+      .optional()
+      .openapi({
+        description:
+          "The most recently posted goods receipt line for this variant, in any store (from Phase 3c; absent until then). Separate from `costPrice`, which receiving never changes. null until first received, and for callers who cannot see `costPrice`.",
+      }),
     reorderPoint: z.number().nullable().openapi({ example: 10 }),
     stockOnHand: z.number().nullable().openapi({
       description:
@@ -773,7 +793,7 @@ export const StockMovementSchema = z
     product: StockProductRefSchema,
     type: z.string().openapi({
       description:
-        "`opening`, `adjustment`, `transfer_out` or `transfer_in` in Phase 2. Purchases and sales will add `purchase`, `purchase_return`, `sale` and `sale_return`: show unknown types as they are rather than failing.",
+        "`opening`, `adjustment`, `transfer_out`, `transfer_in`, or `purchase` (a goods receipt, from Phase 3c). Later phases will add `purchase_return`, `sale` and `sale_return`: show unknown types as they are rather than failing.",
       example: "adjustment",
     }),
     quantityChange: quantity(-2, "Signed: positive adds stock, negative removes it."),
@@ -784,13 +804,13 @@ export const StockMovementSchema = z
       .object({
         type: z.string().openapi({
           description:
-            "`product` (opening stock entered when the product or variant was created), `adjustment` or `transfer` in Phase 2. Purchases and sales will add more: show unknown values as they are.",
+            "`product` (opening stock entered when the product or variant was created), `adjustment`, `transfer`, or `goods_receipt` (from Phase 3c). Later phases will add more: show unknown values as they are.",
           example: "adjustment",
         }),
         id: objectId("665f1c2e8a4b3c0012ab3a00", "The id of the source record."),
         number: z.string().nullable().openapi({
           description:
-            "The source document's number for display (e.g. an invoice number), when it has one. null for product opening stock, and for adjustments and transfers until they get document numbers.",
+            "The source document's number for display (e.g. GRN-00007 for a goods receipt), when it has one. null for product opening stock, and for adjustments and transfers until they get document numbers.",
           example: null as unknown as string,
         }),
       })
@@ -1011,7 +1031,7 @@ export const PurchaseOrderLineSchema = z
     variant: StockVariantRefSchema,
     product: StockProductRefSchema,
     quantity: quantity(24, "Ordered."),
-    receivedQuantity: quantity(0, "Received so far through goods receipts (Phase 3c). Can exceed `quantity` when the vendor over-delivers."),
+    receivedQuantity: quantity(0, "Received so far through goods receipts (Phase 3c). Never above `quantity`: extra goods go on a receipt without a PO."),
     unitCost: money("1.600", "VAT-exclusive cost per unit."),
     subtotal: money("38.400", "quantity × unitCost, rounded to the currency's decimals."),
     tax: z
@@ -1072,3 +1092,93 @@ export const PurchaseOrderListDataSchema = z
     pagination: PaginationSchema,
   })
   .openapi("PurchaseOrderListData");
+
+// ---------- Goods receipts (Phase 3c) ----------
+
+const GoodsReceiptVendorSchema = PurchaseOrderVendorSchema.openapi("GoodsReceiptVendor", {
+  description:
+    "A copy of the vendor's details taken when the receipt was posted (from the PO's issue copy when received against a PO); only `isActive` stays live.",
+});
+
+export const GoodsReceiptPurchaseOrderRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3c00"),
+    number: z.string().openapi({ example: "PO-00012" }),
+  })
+  .openapi("GoodsReceiptPurchaseOrderRef");
+
+const goodsReceiptCore = {
+  id: objectId("665f1c2e8a4b3c0012ab3d00"),
+  number: z.string().openapi({
+    description: "Per organization, given when the receipt is posted: GRN-00001, GRN-00002… (more digits after GRN-99999).",
+    example: "GRN-00007",
+  }),
+  store: StockStoreRefSchema,
+  vendor: GoodsReceiptVendorSchema,
+  purchaseOrder: GoodsReceiptPurchaseOrderRefSchema.nullable().openapi({ description: "null for a receipt without a PO." }),
+  receivedDate: z.string().openapi({ description: "YYYY-MM-DD: when the goods arrived.", example: "2026-10-28" }),
+  vendorReference: z.string().nullable().openapi({ example: "DN-55120" }),
+  subtotal: money("38.400", "Sum of the lines' `subtotal`, VAT-exclusive."),
+  stockValue: money(
+    "38.400",
+    "Sum of the lines' `stockValue`: what the receipt added to the stock's worth. Equals `subtotal` unless the organization has no TRN (input VAT is then part of the cost)."
+  ),
+  createdBy: PurchaseOrderUserRefSchema,
+  createdAt: isoDate("2026-10-28T06:45:00.000Z"),
+};
+
+export const GoodsReceiptSummarySchema = z
+  .object({
+    ...goodsReceiptCore,
+    lineCount: z.number().int().openapi({ example: 2 }),
+  })
+  .openapi("GoodsReceiptSummary");
+
+export const GoodsReceiptLineSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3d01", "Line id. Returns to vendor (Phase 3e) refer to it."),
+    purchaseOrderLineId: objectId("665f1c2e8a4b3c0012ab3c01").nullable().openapi({ description: "null without a PO." }),
+    variant: StockVariantRefSchema,
+    product: StockProductRefSchema,
+    quantity: quantity(24, "Received on this receipt."),
+    unitCost: money("1.600", "VAT-exclusive cost per unit, as received (the PO line's unless it was changed)."),
+    subtotal: money("38.400", "quantity × unitCost, rounded to the currency's decimals."),
+    stockUnitCost: money(
+      "1.600",
+      "The cost per unit added to stock. Same as `unitCost`, except for an organization with no TRN: input VAT is added (the PO line's tax rate, or the product's without a PO; only when the vendor is `vat_registered` and the product `standard`)."
+    ),
+    stockValue: money("38.400", "quantity × stockUnitCost, rounded."),
+    stocked: z.boolean().openapi({
+      description: "false when the product does not track inventory: the line is recorded (for bills and the last purchase cost) but stock does not change.",
+      example: true,
+    }),
+    quantityAfter: quantity(42, "The store's stock right after this receipt.").nullable().openapi({
+      description: "The store's stock of this variant right after this receipt; null when `stocked` is false.",
+    }),
+    note: z.string().nullable().openapi({ example: "Batch 2026-10-B" }),
+  })
+  .openapi("GoodsReceiptLine");
+
+export const GoodsReceiptSchema = z
+  .object({
+    ...goodsReceiptCore,
+    notes: z.string().nullable().openapi({ example: "Two cartons slightly crushed, contents fine." }),
+    lines: z.array(GoodsReceiptLineSchema),
+  })
+  .openapi("GoodsReceipt");
+
+export const GoodsReceiptDataSchema = z
+  .object({
+    goodsReceipt: GoodsReceiptSchema,
+    purchaseOrder: PurchaseOrderSchema.nullable().openapi({
+      description: "Receipts against a PO, on create only: the PO after this receipt (new `status`, `receivedQuantity`, `version`), so the screen can refresh without another call. null otherwise, and on GET.",
+    }),
+  })
+  .openapi("GoodsReceiptData");
+
+export const GoodsReceiptListDataSchema = z
+  .object({
+    goodsReceipts: z.array(GoodsReceiptSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("GoodsReceiptListData");
