@@ -53,9 +53,6 @@ export const goodsReceiptWithoutPoExample = {
 // Shared descriptions
 // ==========================================
 
-const PREVIEW =
-  "**Contract preview (Phase 3c):** documented for frontend review; returns 404 until implemented.";
-
 const readNote =
   "Requires a **tenant** bearer token and **`purchase:read`** for this store: a store role at this store, or an organization-scoped role. Works for a deactivated store too.";
 
@@ -160,7 +157,7 @@ registry.registerPath({
   path: orgBase,
   tags,
   summary: "List goods receipts across stores",
-  description: [PREVIEW, "", listNote, "", LIST_RULES].join("\n"),
+  description: [listNote, "", LIST_RULES].join("\n"),
   security,
   request: { query: listGoodsReceiptsQuerySchema },
   responses: {
@@ -179,7 +176,7 @@ registry.registerPath({
   path: storeBase,
   tags,
   summary: "List a store's goods receipts",
-  description: [PREVIEW, "", readNote, "", "The same list for this store only (a `storeId` query filter is ignored here).", "", LIST_RULES].join("\n"),
+  description: [readNote, "", "The same list for this store only (a `storeId` query filter is ignored here).", "", LIST_RULES].join("\n"),
   security,
   request: { params: storeIdParam, query: listGoodsReceiptsQuerySchema.omit({ storeId: true }) },
   responses: {
@@ -200,7 +197,7 @@ registry.registerPath({
   path: grnPath,
   tags,
   summary: "Get a goods receipt",
-  description: [PREVIEW, "", readNote, "", "`purchaseOrder` in `data` is always null here: fetch the PO for its current state."].join("\n"),
+  description: [readNote, "", "`purchaseOrder` in `data` is always null here: fetch the PO for its current state."].join("\n"),
   security,
   request: { params: grnParams },
   responses: {
@@ -223,8 +220,6 @@ registry.registerPath({
   tags,
   summary: "Receive goods",
   description: [
-    PREVIEW,
-    "",
     createNote,
     "",
     "Records goods that arrived at this store, against a purchase order or without one. The store comes from the URL and must be active.",

@@ -1,7 +1,7 @@
 /**
  * Purpose: Phase 3c goods receipt wiring that the validator unit tests cannot see: the
- * purchase:receive role seeding and sync, role scope rules for the new key, the contract-preview
- * routes and the Swagger document.
+ * purchase:receive role seeding and sync, role scope rules for the new key, the live routes and
+ * the Swagger document. Behaviour is covered in goodsReceipts.test.ts.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -103,18 +103,19 @@ describe("purchase:receive role seeding", () => {
   });
 });
 
-describe("contract preview: goods receipt routes are not live yet", () => {
-  it("every documented route returns 404", async () => {
-    const calls = [
-      request.get(GRNS),
-      request.get(STORE_GRNS),
-      request.post(STORE_GRNS).set("Idempotency-Key", "6c8e4f0e-2a7b-4d3c-9f51-0b2d7a1e9c44").send(goodsReceiptExample),
-      request.get(`${STORE_GRNS}/${GRN_ID}`),
-    ];
-    for (const call of calls) {
-      const res = await call.set(auth(admin));
-      expect(res.status).toBe(404);
-    }
+describe("goods receipt routes are live", () => {
+  it("every documented route is mounted (no route-level 404)", async () => {
+    const list = await request.get(GRNS).set(auth(admin));
+    expect(list.status).toBe(200);
+    // The documented example names a PO and store that do not exist: the store check answers.
+    const post = await request
+      .post(STORE_GRNS)
+      .set(auth(admin))
+      .set("Idempotency-Key", "6c8e4f0e-2a7b-4d3c-9f51-0b2d7a1e9c44")
+      .send(goodsReceiptExample);
+    expect(post.body.message).toBe("Store not found.");
+    const one = await request.get(`${STORE_GRNS}/${GRN_ID}`).set(auth(admin));
+    expect(one.body.message).toBe("Store not found.");
   });
 });
 

@@ -495,6 +495,15 @@ function toVariantView(
     sellingPrice: formatMoney(variant.sellingPriceMinor, decimals),
     costPrice:
       !options.showCost || variant.costPriceMinor === null ? null : formatMoney(variant.costPriceMinor, decimals),
+    lastPurchase:
+      !options.showCost || !variant.lastPurchase
+        ? null
+        : {
+            unitCost: formatMoney(variant.lastPurchase.unitCostMinor, decimals),
+            receivedDate: variant.lastPurchase.receivedDate,
+            vendor: { id: variant.lastPurchase.vendorId, name: variant.lastPurchase.vendorName },
+            goodsReceipt: { id: variant.lastPurchase.goodsReceiptId, number: variant.lastPurchase.goodsReceiptNumber },
+          },
     reorderPoint: variant.reorderPoint ?? null,
     stockOnHand: onHand(product, variant._id, stock),
     isDefault: variant.isDefault,
