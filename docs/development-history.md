@@ -1532,3 +1532,75 @@ the against-PO / without-PO line shapes, duplicates, quantities, costs, dates, t
 `tests/integration/goodsReceiptContract.test.ts` covers role seeding and the sync for existing
 organizations, role scope rules for the new key, the 404 preview routes and the OpenAPI document.
 1111 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3c implementation (goods receipts)
+
+The Goods Receipts endpoints are live behind the Phase 3c contract.
+
+- **Model:** `GoodsReceipt` (organization + store scoped, no soft delete) is final: the model
+  refuses update and delete queries, like the stock ledger. It keeps the vendor copy (the PO's
+  issue copy against a PO), `purchaseOrderNumber`, and per line the cost received
+  (`unitCostMinor`), the cost that went into stock (`stockUnitCostMinor`), `stocked` and
+  `quantityAfterMilli`. `sequence` orders the lists; `DocumentCounter` gained the
+  `goods_receipt` type (GRN-00001).
+- **Posting** runs in the idempotency transaction, all or nothing: the counter, one `purchase`
+  movement per stocked line through `stockLedger.applyMovement` (source `goods_receipt` with the
+  GRN number), the PO's received quantities and status, and each variant's `lastPurchase`.
+  Receiving always adds stock, whatever `allowNegativeStock` says.
+- **PO concurrency:** no PO version is sent. The PO is read inside the transaction and written
+  back with `$inc` on the received lines (arrayFilters) conditional on `{ version, status }`,
+  so two receipts of one PO conflict and the transaction retries with fresh reads: a line can
+  never go above its ordered quantity. Receiving bumps the PO `version`, so an edit someone had
+  open gets `PURCHASE_ORDER_VERSION_CONFLICT`, and from the first receipt the PO is locked.
+- **Error order** against a PO: 400 future `receivedDate`, 404 PO, 409 status, 400 date before
+  the PO's `orderDate`, 409
+  `PURCHASE_ORDER_CHANGED` (line ids gone after an edit), 400 line costs and whole units (the unit
+  is checked again), 403 cost change without `purchase:order`, 409
+  `RECEIVED_QUANTITY_EXCEEDS_ORDERED` (one item per line).
+- **purchase:order** is checked in the service (`canOrder` from the controller): a receipt
+  without a PO (403 on `vendorId`, before anything else) or a line cost other than the PO line's
+  (403 on `lines[i].unitCost`). Sending the PO's own cost is not a change.
+- **Without a PO:** the vendor must be active and its `purchaseDocumentCount` goes up (so it
+  cannot be deleted); goods only, inactive products and variants allowed.
+- **No TRN:** `stockUnitCost` = `unitCost` + VAT at the PO line's rate (or, without a PO, the
+  product's or default rate), only for a `vat_registered` vendor and a `standard` product.
+- **Last purchase:** `ProductVariant.lastPurchase` (cost, date, vendor name, receipt) is set on
+  every posting; `costPrice` is never touched. Shown on product responses under the same rule as
+  `costPrice` (null for callers who cannot see costs). Now always present in the schema.
+- `purchaseOrder.service` exports `storeToday`, `taxRatesFor`, `lineTax` and
+  `toPurchaseOrderDetail` for receipts. `scripts/syncIndexes.ts` lists `GoodsReceipt`.
+
+### Deploy note
+
+Run `npm run migrate` (builds the goods receipt indexes). Roles already have `purchase:receive`
+from the contract's sync.
+
+Testing: `tests/integration/goodsReceipts.test.ts` (31 tests: partial and complete receipts,
+over-receipt, a PO edited since loaded, PO locking and close, PO status and store checks, a
+deactivated vendor, cost changes and the average, whole units re-checked, dates, receipts without
+a PO, vendor in use, line error collection, untracked goods, negative stock, no-TRN costs, last
+purchase and its visibility, idempotency, four concurrent receipts of one PO, permissions per
+role, a deactivated store, reads, lists, filters and narrowing). `goodsReceiptContract.test.ts`
+was flipped to the live routes.
+
+### pos-tester review
+
+Fixed: searching receipts by a partial prefix (`G`, `GR`, `GRN`) built `^GRN-GRN` and matched
+nothing. A term that is a prefix of `GRN-` now matches every number.
+
+Open for a decision (not changed):
+- Input VAT in the stock cost (no TRN) is rounded per unit, as the contract documents
+  (`stockValue = quantity × stockUnitCost`). On very cheap items the VAT can round to 0 per unit
+  (0.005 BHD at 5%), so stock is slightly under-valued compared with VAT on the line total.
+- `lastPurchase` follows posting time, not `receivedDate`: a backdated receipt entered late
+  replaces a newer purchase's cost (matches "most recently posted").
+
+Reviewed and holding: strict response schemas, concurrency (numbering, one PO from many
+receipts, receipts racing PO edit / cancel / close and vendor delete, vendor document count),
+atomicity under forced failures, idempotency across stores, users and organizations, tenant and
+store isolation, permission edge cases (equal cost in other spellings, 403 before 409, custom
+roles), ledger math across currencies, `lastPurchase` visibility on every product response,
+hostile bodies and queries, dates and timezones. New:
+`tests/integration/goodsReceiptReview.test.ts` (85 tests). 1227 tests pass.

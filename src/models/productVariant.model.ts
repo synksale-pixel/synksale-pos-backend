@@ -26,6 +26,18 @@ export interface IProductBarcodes {
   mpn: string | null;
 }
 
+export interface IVariantLastPurchase {
+  /** VAT-exclusive, minor units, as on the receipt. */
+  unitCostMinor: number;
+  /** YYYY-MM-DD. */
+  receivedDate: string;
+  vendorId: mongoose.Types.ObjectId;
+  vendorName: string;
+  goodsReceiptId: mongoose.Types.ObjectId;
+  goodsReceiptNumber: string;
+  postedAt: Date;
+}
+
 export interface IProductVariant {
   organizationId: mongoose.Types.ObjectId;
   productId: mongoose.Types.ObjectId;
@@ -46,6 +58,11 @@ export interface IProductVariant {
   sellingPriceMinor: number;
   /** Minor units of the org currency, VAT-exclusive. Null when unknown. */
   costPriceMinor: number | null;
+  /**
+   * The most recently posted goods receipt line for this variant, in any store. Kept apart from
+   * costPriceMinor, which receiving never changes. Null until first received.
+   */
+  lastPurchase: IVariantLastPurchase | null;
   /** In the product's unit; at most 3 decimals. Null when not set. */
   reorderPoint: number | null;
   isDefault: boolean;
@@ -121,6 +138,21 @@ const productVariantSchema = new Schema<IProductVariant, ProductVariantModel>(
       type: Number,
       default: null,
       ...minorAmount("Cost price"),
+    },
+    lastPurchase: {
+      type: new Schema<IVariantLastPurchase>(
+        {
+          unitCostMinor: { type: Number, required: true },
+          receivedDate: { type: String, required: true },
+          vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", required: true },
+          vendorName: { type: String, required: true },
+          goodsReceiptId: { type: Schema.Types.ObjectId, ref: "GoodsReceipt", required: true },
+          goodsReceiptNumber: { type: String, required: true },
+          postedAt: { type: Date, required: true },
+        },
+        { _id: false }
+      ),
+      default: null,
     },
     reorderPoint: {
       type: Number,

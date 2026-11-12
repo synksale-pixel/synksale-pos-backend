@@ -40,6 +40,7 @@ import { IdempotencyKey } from "../src/models/idempotencyKey.model";
 import { Vendor } from "../src/models/vendor.model";
 import { PurchaseOrder } from "../src/models/purchaseOrder.model";
 import { DocumentCounter } from "../src/models/documentCounter.model";
+import { GoodsReceipt } from "../src/models/goodsReceipt.model";
 
 const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
   Organization,
@@ -59,6 +60,7 @@ const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslin
   Vendor,
   PurchaseOrder,
   DocumentCounter,
+  GoodsReceipt,
 ];
 
 async function run() {

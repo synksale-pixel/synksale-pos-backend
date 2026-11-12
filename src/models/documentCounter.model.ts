@@ -1,7 +1,7 @@
 /**
  * Purpose: DocumentCounter model definition.
- * One counter per organization and document type (purchase orders now; receipts and debit
- * notes later). Numbers are taken with an atomic `$inc` inside the transaction that creates the
+ * One counter per organization and document type (purchase orders and goods receipts;
+ * debit notes later). Numbers are taken with an atomic `$inc` inside the transaction that creates the
  * document, so two documents saved at the same moment never share a number, and a document whose
  * transaction aborts gives its number back.
  */
@@ -9,7 +9,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 import { tenantScopePlugin } from "./plugins/tenantScope.plugin";
 
-export const COUNTER_TYPES = ["purchase_order"] as const;
+export const COUNTER_TYPES = ["purchase_order", "goods_receipt"] as const;
 export type CounterType = (typeof COUNTER_TYPES)[number];
 
 export interface IDocumentCounter {

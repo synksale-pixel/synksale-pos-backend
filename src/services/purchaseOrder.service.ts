@@ -77,7 +77,7 @@ export function todayIn(timeZone: string, now = new Date()): string {
   }
 }
 
-async function storeToday(organizationId: string, storeId: string): Promise<string> {
+export async function storeToday(organizationId: string, storeId: string): Promise<string> {
   const store = await Store.findOne({ _id: storeId, organizationId }).select("timezone");
   return todayIn(store?.timezone || "UTC");
 }
@@ -241,7 +241,7 @@ const fromStored = (lines: IPurchaseOrderLine[]): LineSource[] =>
   }));
 
 /** The tax rates products point to (any state: a product keeps its rate), plus the org default. */
-async function taxRatesFor(organizationId: string, products: ProductDocument[]) {
+export async function taxRatesFor(organizationId: string, products: ProductDocument[]) {
   const ids = products.map((product) => product.taxRateId).filter((id): id is ObjectId => Boolean(id));
   const [rates, fallback] = await Promise.all([
     ids.length ? TaxRate.find({ organizationId, _id: { $in: ids }, isDelete: anyState }) : [],
@@ -255,7 +255,7 @@ async function taxRatesFor(organizationId: string, products: ProductDocument[]) 
  * everything else (zero-rated, exempt, out of scope, or a vendor that charges no VAT, including
  * overseas vendors under reverse charge) estimates 0.
  */
-function lineTax(
+export function lineTax(
   product: ProductDocument,
   vatTreatment: VatTreatment,
   rates: { byId: Map<string, TaxRateDocument>; fallback: TaxRateDocument | null }
@@ -491,6 +491,11 @@ function detailView(ctx: ViewContext, po: PurchaseOrderDocument) {
     statusReason: po.statusReason ?? null,
     editable: EDITABLE_STATUSES.includes(po.status),
   };
+}
+
+/** The full PO view (lines, status events); goods receipts return it after receiving. */
+export async function toPurchaseOrderDetail(organizationId: string, po: PurchaseOrderDocument, decimals?: number) {
+  return toDetail(organizationId, po, decimals);
 }
 
 async function toDetail(organizationId: string, po: PurchaseOrderDocument, decimals?: number) {

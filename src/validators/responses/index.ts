@@ -550,11 +550,9 @@ export const ProductVariantSchema = z
         }),
       })
       .nullable()
-      // Optional only while Phase 3c is a contract preview; always present once receipts ship.
-      .optional()
       .openapi({
         description:
-          "The most recently posted goods receipt line for this variant, in any store (from Phase 3c; absent until then). Separate from `costPrice`, which receiving never changes. null until first received, and for callers who cannot see `costPrice`.",
+          "The most recently posted goods receipt line for this variant, in any store. Separate from `costPrice`, which receiving never changes. null until first received, and for callers who cannot see `costPrice`.",
       }),
     reorderPoint: z.number().nullable().openapi({ example: 10 }),
     stockOnHand: z.number().nullable().openapi({
