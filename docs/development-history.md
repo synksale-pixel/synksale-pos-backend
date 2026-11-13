@@ -1604,3 +1604,93 @@ store isolation, permission edge cases (equal cost in other spellings, 403 befor
 roles), ledger math across currencies, `lastPurchase` visibility on every product response,
 hostile bodies and queries, dates and timezones. New:
 `tests/integration/goodsReceiptReview.test.ts` (85 tests). 1227 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3d contract (vendor bills + payments: validators + Swagger, no endpoints yet)
+
+The **Vendor Bills** and **Vendor Payments** endpoints are documented in Swagger with a "contract
+preview" note and return 404 until implemented: `GET/POST /bills`, `GET /bills/{billId}`,
+`POST /bills/{billId}/void`, `GET/POST /vendor-payments`, `GET /vendor-payments/{paymentId}`,
+`POST /vendor-payments/{paymentId}/void`. No PATCH or DELETE: both are void-only.
+
+Decisions (approved 2026-11-13; the user chose the tech lead's recommendation on every open call):
+
+1. Organization-level, not under `/stores`: one vendor invoice often covers several stores.
+2. Numbered BILL-00001 / PAY-00001 per organization (new `DocumentCounter` types at
+   implementation).
+3. Posted on create: no drafts, edits or deletes. Statuses `unpaid`, `partially_paid`, `paid`,
+   `void`; `overdue` is worked out on read from `dueDate`, never stored.
+4. Goods lines reference `goodsReceiptId` + `goodsReceiptLineId`; variant, product and store come
+   from the receipt. Quantity defaults to what is unbilled, `unitCost` to the receipt's.
+5. One bill can cover several receipts (any stores) of the same vendor (`VENDOR_MISMATCH`
+   otherwise); one receipt line can be split across bills.
+6. **Billing more than was received is refused** (`BILLED_QUANTITY_EXCEEDS_RECEIVED`), tracked
+   by a `billedQuantity` on the receipt line. Over-invoicing is settled with a 3e debit note.
+7. A price different from the receipt is kept as `costVariance`; stock is never revalued.
+8. **Lines without a receipt are service products only** (no free-text expenses in v1); goods
+   need a receipt (`GOODS_REQUIRE_RECEIPT`). Delivery charges are expenses, not landed cost.
+9. VAT per line, same rule as POs (vendor `vat_registered` and product `standard`); the rate
+   defaults from the receipt's PO line, product or org default and can be set to match the
+   invoice (`taxRateId`, or `null` for none). A bill-level `vatAdjustment` of at most 5 minor
+   units either way absorbs invoice-total rounding. `overseas` vendors: 0 VAT, treatment copied.
+10. No TRN: a VAT figure different from the receipt's estimate shows up in `costVariance`;
+    stock cost is not adjusted (accepted).
+11. Organization currency only.
+12. Void only, with `version` and a required `reason`. A bill with payments that are not void
+    cannot be voided (`BILL_HAS_PAYMENTS`); voiding gives back `billedQuantity` and frees the
+    vendor invoice number.
+13. One payment, one vendor, split across one or more open bills; partial payments allowed;
+    `amount` must equal the allocations' sum. **No overpayment or advances in v1**
+    (`PAYMENT_EXCEEDS_DUE`).
+14. Methods `cash`, `bank_transfer`, `cheque`, `card`, `other` plus `reference`; no bank account
+    or cash drawer link (revisit with shifts).
+15. Voiding a payment reverses all its allocations in one step.
+16. Dates in the organization's timezone: `billDate` / `paymentDate` not in the future;
+    `billDate` not before a billed receipt's `receivedDate`; `paymentDate` not before a paid
+    bill's `billDate`; `dueDate` defaults to `billDate + paymentTermsDays`, not before `billDate`.
+17. `vendorInvoiceNumber` required, unique per vendor among bills that are not void
+    (case-insensitive): `DUPLICATE_VENDOR_INVOICE`.
+18. **New permissions `purchase:bill` and `purchase:pay`** (organization scope) on accountant;
+    org_admin gets them from the catalog. Not on store roles. Reading needs `purchase:read` from
+    an organization-scoped role; store staff see only `billedQuantity` on receipts.
+19. Bills and payments count toward the vendor's `purchaseDocumentCount`; an inactive vendor can
+    still be billed and paid.
+20. `Idempotency-Key` on bill create, payment create and both voids. Conditional `$inc` on the
+    receipt line's billed quantity and the bill's paid amount so races retry, as in 3c.
+21. Product and variant delete must also refuse when a goods receipt line or bill line uses the
+    variant (closes the 3c gap: untracked goods and services left no stock history).
+
+- **Bill response:** vendor copy, `vendorInvoiceNumber`, dates, `overdue`, `subtotal`, `tax`,
+  `vatAdjustment`, `total`, `paid`, `balanceDue`, `costVariance`, `version`; lines with `kind`,
+  receipt ref, store, `receivedUnitCost`, tax, `costVariance`; `payments` (void ones included).
+- **Payment response:** vendor, date, `amount`, `method`, `reference`, allocations; on create and
+  void also the bills touched, after the change.
+- **Error codes:** new `BILL_NOT_FOUND`, `VENDOR_PAYMENT_NOT_FOUND`, `VENDOR_MISMATCH`,
+  `GOODS_REQUIRE_RECEIPT`, `VAT_ADJUSTMENT_TOO_LARGE`, `DUPLICATE_VENDOR_INVOICE`,
+  `BILLED_QUANTITY_EXCEEDS_RECEIVED`, `BILL_VERSION_CONFLICT`, `BILL_STATUS_CONFLICT`,
+  `BILL_HAS_PAYMENTS`, `PAYMENT_EXCEEDS_DUE`, `VENDOR_PAYMENT_VERSION_CONFLICT`,
+  `VENDOR_PAYMENT_STATUS_CONFLICT`, plus the existing vendor, receipt, variant, tax rate, money and
+  idempotency codes.
+- **Other contract changes:** `GoodsReceiptLine.billedQuantity` (optional while in preview);
+  product, variant and vendor delete docs name bills and payments.
+
+For the implementation:
+
+- `Bill` and `VendorPayment` models (organization scoped, no soft delete); partial unique index
+  on `{ organizationId, vendorId, vendorInvoiceNumberLower }` where status ≠ void.
+- `billedQuantityMilli` on goods receipt lines (only field of a receipt that ever changes).
+- A claim variant of the vendor that does not require `isActive`.
+- Org-scope read check for `purchase:read` (store roles get 403).
+- The product/variant delete check, added to `syncIndexes` as needed.
+
+### Deploy note
+
+Run `npm run migrate` (it includes `sync:system-roles`) so existing organizations' org_admin and
+accountant roles receive `purchase:bill` and `purchase:pay`.
+
+Testing: `tests/unit/billValidator.test.ts` pins the contract (Swagger examples parse, goods and
+service line shapes, duplicates, dates, `vatAdjustment`, payment sum equality in exact
+thousandths, methods, voids); `tests/integration/billContract.test.ts` covers role seeding and
+the sync for existing organizations, role scope rules for the new keys, the 404 preview routes
+and the OpenAPI document. 1258 tests pass.

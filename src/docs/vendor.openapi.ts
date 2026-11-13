@@ -215,7 +215,7 @@ registry.registerPath({
     writeNote,
     "",
     "Soft delete; the name becomes reusable. Products that named this vendor as preferred are cleared (`preferredVendor: null`).",
-    "A vendor with any purchase order (any status; deleted drafts do not count) or, in later phases, receipt, bill or return cannot be deleted (`VENDOR_IN_USE`); deactivate it instead.",
+    "A vendor with any purchase order (any status; deleted drafts do not count), goods receipt, vendor bill or vendor payment (or, in Phase 3e, return) cannot be deleted (`VENDOR_IN_USE`); deactivate it instead.",
   ].join("\n"),
   security,
   request: { params: vendorIdParam },

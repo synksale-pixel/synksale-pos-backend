@@ -1153,6 +1153,10 @@ export const GoodsReceiptLineSchema = z
     quantityAfter: quantity(42, "The store's stock right after this receipt.").nullable().openapi({
       description: "The store's stock of this variant right after this receipt; null when `stocked` is false.",
     }),
+    billedQuantity: quantity(
+      0,
+      "How much of this line is on vendor bills that are not void (Phase 3d). Never above `quantity`. Optional while bills are a contract preview; always present once they ship."
+    ).optional(),
     note: z.string().nullable().openapi({ example: "Batch 2026-10-B" }),
   })
   .openapi("GoodsReceiptLine");
@@ -1180,3 +1184,232 @@ export const GoodsReceiptListDataSchema = z
     pagination: PaginationSchema,
   })
   .openapi("GoodsReceiptListData");
+
+// ---------- Vendor bills and payments (Phase 3d) ----------
+
+const BILL_STATUS_LIST =
+  "`unpaid`, `partially_paid`, `paid` or `void`. Read it as an open-ended string: later phases may add values.";
+
+const signedMoney = (example: string, description: string) =>
+  z.string().openapi({ description: `${description} Signed decimal string.`, example });
+
+const BillVendorSchema = PurchaseOrderVendorSchema.openapi("BillVendor", {
+  description:
+    "A copy of the vendor's details taken when the bill was posted (`vatTreatment` decides the VAT, e.g. `overseas` bills carry no VAT in v1); only `isActive` stays live.",
+});
+
+const BillGoodsReceiptRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3d00"),
+    number: z.string().openapi({ example: "GRN-00007" }),
+    receivedDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-10-28" }),
+  })
+  .openapi("BillGoodsReceiptRef");
+
+const statusEventOf = (description: string) =>
+  z
+    .object({
+      at: isoDate("2026-11-14T10:00:00.000Z"),
+      by: PurchaseOrderUserRefSchema,
+    })
+    .nullable()
+    .openapi({ description });
+
+const billCore = {
+  id: objectId("665f1c2e8a4b3c0012ab3e00"),
+  number: z.string().openapi({
+    description: "Per organization, given when the bill is posted: BILL-00001, BILL-00002… (more digits after BILL-99999).",
+    example: "BILL-00004",
+  }),
+  status: z.string().openapi({ description: BILL_STATUS_LIST, example: "partially_paid" }),
+  vendor: BillVendorSchema,
+  vendorInvoiceNumber: z.string().openapi({ example: "INV-2026-4471" }),
+  billDate: z.string().openapi({ description: "YYYY-MM-DD: the invoice date.", example: "2026-11-13" }),
+  dueDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-12-13" }),
+  overdue: z.boolean().openapi({
+    description:
+      "true when the bill is `unpaid` or `partially_paid` and `dueDate` is before today (organization timezone). Worked out on every read.",
+    example: false,
+  }),
+  subtotal: money("39.600", "Sum of the lines' `subtotal`, VAT-exclusive."),
+  tax: money("3.958", "Sum of the lines' `tax` plus `vatAdjustment`."),
+  vatAdjustment: signedMoney("-0.002", "The rounding correction entered to match the invoice; \"0.000\" when none."),
+  total: money("43.558", "subtotal + tax: what is owed for this bill."),
+  paid: money("20.000", "Sum of the allocations of payments that are not void."),
+  balanceDue: money("23.558", "total − paid. \"0.000\" once paid, and for a void bill."),
+  costVariance: signedMoney(
+    "1.200",
+    "Sum of the goods lines' `costVariance`: how much more (or, negative, less) the bill costs than the receipts put into stock. Stock is not revalued; kept for purchase-price-variance reporting."
+  ),
+  version: z.number().int().openapi({
+    description: "Goes up by one on every change (each payment allocated or voided, and a void). Send it back when voiding.",
+    example: 2,
+  }),
+  createdBy: PurchaseOrderUserRefSchema,
+  createdAt: isoDate("2026-11-13T08:00:00.000Z"),
+  updatedAt: isoDate("2026-11-14T10:00:00.000Z"),
+};
+
+export const BillSummarySchema = z
+  .object({
+    ...billCore,
+    lineCount: z.number().int().openapi({ example: 3 }),
+  })
+  .openapi("BillSummary");
+
+export const BillLineSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3e01", "Line id. Debit notes (Phase 3e) may refer to it."),
+    kind: z.string().openapi({
+      description: "`goods` (billed from a goods receipt line) or `service` (no receipt). Open-ended.",
+      example: "goods",
+    }),
+    goodsReceipt: BillGoodsReceiptRefSchema.nullable().openapi({ description: "Goods lines: the receipt billed. null on a service line." }),
+    goodsReceiptLineId: objectId("665f1c2e8a4b3c0012ab3d01").nullable().openapi({ description: "null on a service line." }),
+    store: StockStoreRefSchema.nullable().openapi({ description: "Goods lines: the store that received the goods. null on a service line." }),
+    variant: StockVariantRefSchema,
+    product: StockProductRefSchema,
+    quantity: quantity(24, "Billed on this line."),
+    unitCost: money("1.650", "VAT-exclusive price per unit, as on the invoice."),
+    receivedUnitCost: money("1.600", "Goods lines: the receipt line's `unitCost`.").nullable().openapi({
+      description: "Goods lines: the receipt line's `unitCost`. null on a service line.",
+    }),
+    subtotal: money("39.600", "quantity × unitCost, rounded to the currency's decimals."),
+    tax: z
+      .object({
+        taxPreference: z.string().openapi({
+          description: "The product's: `standard`, `zero_rated`, `exempt` or `out_of_scope` (open-ended).",
+          example: "standard",
+        }),
+        taxRate: z
+          .object({
+            id: objectId("665f1c2e8a4b3c0012ab3600"),
+            name: z.string().openapi({ example: "VAT 10%" }),
+            rate: z.number().openapi({ description: "Percent.", example: 10 }),
+          })
+          .nullable()
+          .openapi({ description: "The rate charged; null when the line carries no VAT." }),
+        tax: money(
+          "3.960",
+          "subtotal × rate, rounded. 0 when the vendor is not `vat_registered`, the product is not `standard`, or the rate was set to none."
+        ),
+      })
+      .openapi("BillLineTax"),
+    total: money("43.560", "subtotal + tax."),
+    costVariance: signedMoney(
+      "1.200",
+      "Goods lines: what this line costs the business minus what the receipt put into stock for the same quantity. With a TRN: subtotal − quantity × receipt `unitCost`. Without a TRN (VAT is part of the cost): total − quantity × receipt `stockUnitCost`. \"0.000\" on a service line."
+    ),
+    note: z.string().nullable().openapi({ example: "Price increase from 1 Nov" }),
+  })
+  .openapi("BillLine");
+
+export const BillPaymentRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3f00"),
+    number: z.string().openapi({ example: "PAY-00002" }),
+    paymentDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-11-14" }),
+    method: z.string().openapi({ example: "bank_transfer" }),
+    amount: money("20.000", "The part of the payment allocated to this bill."),
+    status: z.string().openapi({
+      description: "The payment's: `posted` or `void`. Void payments are listed but do not count toward `paid`.",
+      example: "posted",
+    }),
+  })
+  .openapi("BillPaymentRef");
+
+export const BillSchema = z
+  .object({
+    ...billCore,
+    notes: z.string().nullable().openapi({ example: "October statement, two deliveries." }),
+    lines: z.array(BillLineSchema),
+    payments: z.array(BillPaymentRefSchema).openapi({ description: "Every payment allocated to this bill, oldest first, void ones included." }),
+    voided: statusEventOf("null unless voided."),
+    voidReason: z.string().nullable().openapi({ example: null as unknown as string }),
+  })
+  .openapi("Bill");
+
+export const BillDataSchema = z.object({ bill: BillSchema }).openapi("BillData");
+
+export const BillListDataSchema = z
+  .object({
+    bills: z.array(BillSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("BillListData");
+
+const VendorPaymentVendorSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab3900"),
+    name: z.string().openapi({ example: "Gulf Roasters W.L.L." }),
+    isActive: z.boolean().openapi({ description: "The vendor's current status.", example: true }),
+  })
+  .openapi("VendorPaymentVendor");
+
+const vendorPaymentCore = {
+  id: objectId("665f1c2e8a4b3c0012ab3f00"),
+  number: z.string().openapi({
+    description: "Per organization, given when the payment is posted: PAY-00001, PAY-00002… (more digits after PAY-99999).",
+    example: "PAY-00002",
+  }),
+  status: z.string().openapi({ description: "`posted` or `void`. Read it as an open-ended string.", example: "posted" }),
+  vendor: VendorPaymentVendorSchema,
+  paymentDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-11-14" }),
+  amount: money("250.000", "Total paid; the sum of the allocations."),
+  method: z.string().openapi({
+    description: "`cash`, `bank_transfer`, `cheque`, `card` or `other`. Read it as an open-ended string.",
+    example: "bank_transfer",
+  }),
+  reference: z.string().nullable().openapi({ example: "FT26318XK2" }),
+  version: z.number().int().openapi({ description: "Send it back when voiding.", example: 1 }),
+  createdBy: PurchaseOrderUserRefSchema,
+  createdAt: isoDate("2026-11-14T10:00:00.000Z"),
+  updatedAt: isoDate("2026-11-14T10:00:00.000Z"),
+};
+
+export const VendorPaymentSummarySchema = z
+  .object({
+    ...vendorPaymentCore,
+    billCount: z.number().int().openapi({ example: 2 }),
+  })
+  .openapi("VendorPaymentSummary");
+
+export const VendorPaymentAllocationSchema = z
+  .object({
+    bill: z
+      .object({
+        id: objectId("665f1c2e8a4b3c0012ab3e00"),
+        number: z.string().openapi({ example: "BILL-00004" }),
+        vendorInvoiceNumber: z.string().openapi({ example: "INV-2026-4471" }),
+      })
+      .openapi("VendorPaymentBillRef"),
+    amount: money("20.000", "The part of the payment that went to this bill."),
+  })
+  .openapi("VendorPaymentAllocation");
+
+export const VendorPaymentSchema = z
+  .object({
+    ...vendorPaymentCore,
+    notes: z.string().nullable().openapi({ example: "Settles October statement." }),
+    allocations: z.array(VendorPaymentAllocationSchema),
+    voided: statusEventOf("null unless voided."),
+    voidReason: z.string().nullable().openapi({ example: null as unknown as string }),
+  })
+  .openapi("VendorPayment");
+
+export const VendorPaymentDataSchema = z
+  .object({
+    payment: VendorPaymentSchema,
+    bills: z.array(BillSummarySchema).openapi({
+      description:
+        "On create and void only: the bills it touched, after the change (new `status`, `paid`, `balanceDue`, `version`), so the screen can refresh without more calls. Empty on GET.",
+    }),
+  })
+  .openapi("VendorPaymentData");
+
+export const VendorPaymentListDataSchema = z
+  .object({
+    payments: z.array(VendorPaymentSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("VendorPaymentListData");

@@ -66,6 +66,7 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
     scope: "organization",
     // product:read + inventory:read: stock valuation and the stock ledger. vendor:manage +
     // purchase:read: the accountant keeps vendor records (TRN, payment terms) for bills.
+    // purchase:bill + purchase:pay: records vendor bills and pays them (Phase 3d).
     permissions: [
       "report:view_org",
       "report:view_store",
@@ -75,6 +76,8 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "inventory:read",
       "vendor:manage",
       "purchase:read",
+      "purchase:bill",
+      "purchase:pay",
     ],
   },
   {

@@ -24,6 +24,8 @@ export type PermissionKey =
   | "purchase:read"
   | "purchase:order"
   | "purchase:receive"
+  | "purchase:bill"
+  | "purchase:pay"
   // Reports
   | "report:view_store"
   | "report:view_org"
@@ -152,6 +154,21 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     label: "Receive Goods",
     category: "Purchases",
     minScope: "store",
+  },
+  {
+    // Vendor bills are organization-level (one invoice can cover several stores' deliveries).
+    // Kept apart from purchase:pay so whoever records bills need not be able to pay them.
+    key: "purchase:bill",
+    label: "Record/Void Vendor Bills",
+    category: "Purchases",
+    minScope: "organization",
+  },
+  {
+    // Money leaving the organization: an organization-level job, separate from recording bills.
+    key: "purchase:pay",
+    label: "Record/Void Vendor Payments",
+    category: "Purchases",
+    minScope: "organization",
   },
 
   // ===== Reports =====
