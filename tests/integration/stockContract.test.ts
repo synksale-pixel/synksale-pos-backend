@@ -156,8 +156,8 @@ describe("inventory:read role seeding", () => {
 
     const results = await syncSystemRolePermissions(old.org._id);
     const added = (slug: string) => results.find((r) => r.slug === slug)?.added ?? [];
-    // The Phase 3a/3c purchase keys are missing from these pre-Phase 2 roles too, so the sync adds them as well.
-    expect([...added("accountant")].sort()).toEqual(["inventory:read", "product:read", "purchase:read", "vendor:manage"]);
+    // The Phase 3a/3c/3d purchase keys are missing from these pre-Phase 2 roles too, so the sync adds them as well.
+    expect([...added("accountant")].sort()).toEqual(["inventory:read", "product:read", "purchase:bill", "purchase:pay", "purchase:read", "vendor:manage"]);
     expect([...added("inventory_clerk")].sort()).toEqual(["inventory:read", "purchase:read", "purchase:receive"]);
     expect(added("store_manager")).toEqual(["inventory:read"]);
 
