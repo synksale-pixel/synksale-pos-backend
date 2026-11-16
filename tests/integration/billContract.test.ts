@@ -110,8 +110,8 @@ describe("purchase:bill and purchase:pay role seeding", () => {
   });
 });
 
-describe("contract preview: bill and payment routes are not live yet", () => {
-  it("every documented route returns 404", async () => {
+describe("bill and payment routes are live", () => {
+  it("no documented route returns a 404 for an unknown path (only the documented not-found codes)", async () => {
     const key = "6c8e4f0e-2a7b-4d3c-9f51-0b2d7a1e9c44";
     const calls = [
       request.get(BILLS),
@@ -125,7 +125,9 @@ describe("contract preview: bill and payment routes are not live yet", () => {
     ];
     for (const call of calls) {
       const res = await call.set(auth(admin));
-      expect(res.status).toBe(404);
+      // The examples name ids that do not exist here: a coded answer, never the router's 404.
+      if (res.status === 404) expect(res.body.code).toMatch(/^(BILL|VENDOR_PAYMENT|GOODS_RECEIPT)_NOT_FOUND$/);
+      else expect([200, 400, 409]).toContain(res.status);
     }
   });
 });

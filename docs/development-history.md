@@ -1694,3 +1694,98 @@ service line shapes, duplicates, dates, `vatAdjustment`, payment sum equality in
 thousandths, methods, voids); `tests/integration/billContract.test.ts` covers role seeding and
 the sync for existing organizations, role scope rules for the new keys, the 404 preview routes
 and the OpenAPI document. 1258 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3d implementation (vendor bills + payments)
+
+The Vendor Bills and Vendor Payments endpoints are live behind the Phase 3d contract
+(`/bills`, `/vendor-payments`; the "contract preview" notes are gone from Swagger).
+
+- **Models:** `Bill` and `VendorPayment` (organization scoped, no soft delete; delete and replace
+  queries are refused). A bill keeps the vendor copy, per line the receipt it bills (id, number,
+  date, line id, store), `receivedUnitCostMinor`, tax, totals and `costVarianceMinor`, plus
+  `goodsReceiptIds` for the receipt filter. `activeInvoiceKey` (the lower-cased vendor invoice
+  number, null once void) carries the partial unique index, so a voided invoice number can be
+  entered again. `DocumentCounter` gained `bill` (BILL-00001) and `vendor_payment` (PAY-00001).
+- **Goods receipts** gained `lines[].billedQuantityMilli`. Receipts stay final: the model now
+  accepts one kind of `updateOne`, an `$inc` of lines' billed quantities, and refuses everything
+  else. Receipts posted before 3d have no field; it reads as 0 and the room check uses
+  `$not: { $gt }` so a missing field matches. Receipt responses always include `billedQuantity`.
+- **Posting a bill** runs in the idempotency transaction: each goods line raises its receipt
+  line with a conditional `$inc` (only while there is room), the vendor's
+  `purchaseDocumentCount` goes up, then the counter and the bill. Two bills of one receipt write
+  the same document, so one aborts with a write conflict and retries into
+  `BILLED_QUANTITY_EXCEEDS_RECEIVED`. A duplicate invoice number committed in between is turned
+  into `DUPLICATE_VENDOR_INVOICE`.
+- **Error order** (create bill): 400 vendor, 404 receipts / receipt lines (all at once), 400 line
+  problems (vendor mismatch, goods on a service line, unknown variant or tax rate, costs, whole
+  units; all at once), 400 `vatAdjustment`, 400 dates, 409 duplicate invoice, 409 over-billing
+  (one item per line).
+- **VAT:** the default rate is the receipt's PO line rate, else the product's, else the org
+  default; an explicit `taxRateId` (or `null`) overrides it. VAT is charged only for a
+  `vat_registered` vendor (as copied onto the bill) and a `standard` product. `vatAdjustment`
+  must fit the currency, be at most 5 minor units either way, and cannot make the bill's VAT
+  negative. A bill whose total is 0 is posted as `paid`.
+- **costVariance:** with a TRN, `subtotal − quantity × receipt unitCost`; without, `total −
+  quantity × receipt stockUnitCost`. Stock, its cost and `lastPurchase` are never touched.
+- **Whole units:** a sent quantity of a whole-number unit must be whole, except exactly the
+  quantity left to bill (the unit may have changed since receiving).
+- **Payments:** amounts are parsed against the currency and must sum exactly; then 404 bills,
+  400 `VENDOR_MISMATCH`, 409 `BILL_STATUS_CONFLICT`, 400 `paymentDate`, 409
+  `PAYMENT_EXCEEDS_DUE` (each collected across allocations). Each bill is written on
+  `{ _id, version }` with `$inc` of `paidMinor` and `version`, so racing payments retry and the
+  second is refused. Payments also count toward the vendor's documents.
+- **Voids:** a bill (version first, then status, then `BILL_HAS_PAYMENTS` naming the posted
+  payments) gives its receipt lines their quantities back and frees the invoice number; the
+  vendor keeps counting it. A payment void reverses every allocation and moves each bill back to
+  `partially_paid` or `unpaid`. Both return 200 (`sendIdempotent` takes a status code now).
+- **Reads:** `purchase:read` from an organization-scoped role (`authorize` with no store), so
+  store roles get 403. `overdue` is worked out with today in the organization's timezone; the
+  `overdue=true` filter uses the same rule.
+- **Catalog:** product and variant delete are refused (`PRODUCT_IN_USE` / `VARIANT_IN_USE`) when
+  any goods receipt line or bill line uses the variant. New indexes on `lines.variantId` for
+  receipts and bills. `scripts/syncIndexes.ts` lists `Bill` and `VendorPayment`.
+
+### Deploy note
+
+Run `npm run migrate` (builds the bill, payment and receipt `lines.variantId` indexes). Roles
+already have `purchase:bill` and `purchase:pay` from the contract's sync.
+
+Testing: `tests/integration/bills.test.ts` (26 tests: whole-line defaults, numbering and due
+dates, price variance, partial and over-billing, a race on one receipt line, several stores plus a
+service line, collected line errors, unknown receipts and vendor, whole units, explicit and no
+VAT, a vendor that is not registered, `vatAdjustment` bounds, no-TRN variance, dates, duplicate
+invoice numbers and reuse after void, idempotency, bill voids and their conflicts, payments
+partial and full, payment voids, overpayment and other refusals, a race on one bill, every list
+filter, permissions per role, `billedQuantity` for store staff, catalog and vendor delete rules,
+receipt immutability). `billContract.test.ts` was flipped to the live routes. A 3c review test
+that deleted a received product through the API now expects 409 and soft-deletes it directly.
+
+### pos-tester review
+
+Fixed:
+- Line total, bill total and cost variance used plain `+`/`-`: a huge cost overflowed into a
+  database validation message. They go through `sumMoney` now (400 `AMOUNT_OUT_OF_RANGE`).
+- The "VAT adjustment cannot make VAT negative" check ran after the duplicate-invoice and
+  over-billing checks; pricing now runs first, so it answers 400 `VAT_ADJUSTMENT_TOO_LARGE` as
+  documented.
+
+Open for a decision (not changed):
+- Schema failures return `errors[].path` without `field` (global handler, all routes).
+- A bill with a total of 0 is posted as `paid` (it cannot be paid, only voided).
+- A positive `vatAdjustment` is accepted on a bill where no line charges VAT.
+- Without a TRN, `stockUnitCost` is rounded per unit and bill VAT per line, so a bill at the
+  received price can show a 0.001 variance (follows the contract formula).
+- Vendor or product delete racing a bill create can slip past the in-use checks (same class as
+  the deferred catalog delete races).
+
+Reviewed and holding: response schemas on every route, error codes, fields and order, VAT and
+variance rounding in BHD and AED, timezone edges, races (one receipt line, one bill, payment vs
+bill void, double voids, duplicate invoices, first counter use, one idempotency key twice at once),
+atomicity under forced failures, tenant isolation on every route and filter, store roles and
+custom roles, receipts posted before 3d, hostile ids, queries and bodies. The receipt update guard
+keeps accepting `$setOnInsert`: Mongoose adds it for timestamps on every update. New:
+`tests/integration/billReview.test.ts` (63 tests). 1347 tests pass.
+
+Requestly: `docs/requestly/section-12-bills-payments.postman_collection.json` (117 requests).

@@ -372,6 +372,8 @@ function detailView(ctx: ViewContext, receipt: GoodsReceiptDocument) {
       stockValue: money(line.stockValueMinor),
       stocked: line.stocked,
       quantityAfter: line.quantityAfterMilli === null || line.quantityAfterMilli === undefined ? null : fromMilli(line.quantityAfterMilli),
+      // Receipts posted before Phase 3d have no billed quantity stored: nothing billed.
+      billedQuantity: fromMilli(line.billedQuantityMilli ?? 0),
       note: line.note ?? null,
     })),
   };
@@ -635,6 +637,7 @@ export async function createGoodsReceipt(
       stockValueMinor,
       stocked,
       quantityAfterMilli,
+      billedQuantityMilli: 0,
       note: line.note,
     });
   }

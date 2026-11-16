@@ -33,6 +33,8 @@ import { getOrganizationCurrency } from "./organization.service";
 import { assertCategoryExists, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
 import { assertVendorSelectable, vendorRefs, VendorRef } from "./vendor.service";
 import { openPurchaseOrderNumbers } from "./purchaseOrder.service";
+import { GoodsReceipt } from "../models/goodsReceipt.model";
+import { variantsOnBills } from "./bill.service";
 import { recordAudit } from "./audit.service";
 import {
   prepareOpeningStock,
@@ -1108,9 +1110,29 @@ async function assertNotOnOpenPurchaseOrder(
 }
 
 /**
+ * Refuses deleting what a goods receipt or vendor bill lists. Goods that do not track inventory
+ * and services leave no stock history, so this is their only trace; receipts and bills must keep
+ * naming a product that still exists.
+ */
+async function assertNoPurchaseHistory(
+  organizationId: string,
+  variantIds: mongoose.Types.ObjectId[],
+  code: "PRODUCT_IN_USE" | "VARIANT_IN_USE",
+  noun: "product" | "variant"
+) {
+  if (variantIds.length === 0) return;
+  const received = await GoodsReceipt.exists({ organizationId, "lines.variantId": { $in: variantIds } });
+  if (received || (await variantsOnBills(organizationId, variantIds))) {
+    throw ApiError.coded(409, code, `This ${noun} has purchase history (goods receipts or vendor bills) and can only be deactivated.`, [
+      { code, meta: { reason: "purchase_history" } },
+    ]);
+  }
+}
+
+/**
  * Soft-deletes a product and its variants, releasing their SKUs and barcodes. A product whose
- * variants have stock history, or are on an open purchase order, is refused (PRODUCT_IN_USE):
- * deactivate it instead.
+ * variants have stock history, purchase history (receipts, bills), or are on an open purchase
+ * order, is refused (PRODUCT_IN_USE): deactivate it instead.
  */
 export async function deleteProduct(organizationId: string, productId: string, actorUserId: string) {
   const product = await findProductOrThrow(organizationId, productId);
@@ -1120,6 +1142,7 @@ export async function deleteProduct(organizationId: string, productId: string, a
   if (await hasStockMovements(organizationId, variantIds)) {
     throw ApiError.coded(409, "PRODUCT_IN_USE", "This product has stock history and can only be deactivated.");
   }
+  await assertNoPurchaseHistory(organizationId, variantIds, "PRODUCT_IN_USE", "product");
   await assertNotOnOpenPurchaseOrder(organizationId, variantIds, "PRODUCT_IN_USE", "product");
 
   await inTransaction(async (session) => {
@@ -1264,6 +1287,7 @@ export async function deleteVariant(organizationId: string, productId: string, v
   if (await hasStockMovements(organizationId, [variant._id])) {
     throw ApiError.coded(409, "VARIANT_IN_USE", "This variant has stock history and can only be deactivated.");
   }
+  await assertNoPurchaseHistory(organizationId, [variant._id], "VARIANT_IN_USE", "variant");
   await assertNotOnOpenPurchaseOrder(organizationId, [variant._id], "VARIANT_IN_USE", "variant");
 
   if (variant.isActive && (await otherActiveVariants(organizationId, product, variant._id)) === 0) {

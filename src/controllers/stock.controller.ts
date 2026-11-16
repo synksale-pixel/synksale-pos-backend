@@ -43,12 +43,16 @@ const paging = (req: Request) => ({
   limit: queryNumber(req.query.limit),
 });
 
-/** Sends a write through the idempotency record and replays a retried request (stock, purchase orders). */
+/**
+ * Sends a write through the idempotency record and replays a retried request (stock, purchases).
+ * `statusCode` is 201 for a new document, 200 for an action on an existing one (a void).
+ */
 export async function sendIdempotent(
   req: Request,
   res: Response,
   message: string,
-  work: (session: ClientSession) => Promise<unknown>
+  work: (session: ClientSession) => Promise<unknown>,
+  statusCode: 200 | 201 = 201
 ) {
   const result = await runIdempotent(
     {
@@ -59,8 +63,8 @@ export async function sendIdempotent(
       path: `${req.baseUrl}${req.path}`,
       body: req.body,
     },
-    201,
-    async (session) => new ApiResponse(201, await work(session), message)
+    statusCode,
+    async (session) => new ApiResponse(statusCode, await work(session), message)
   );
   if (result.replayed) res.setHeader("Idempotent-Replayed", "true");
   res.status(result.statusCode).json(result.body);

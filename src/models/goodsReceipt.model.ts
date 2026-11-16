@@ -2,7 +2,8 @@
  * Purpose: GoodsReceipt model definition.
  * Goods that arrived at one store, against a purchase order or without one. The only purchase
  * document that adds stock. Final once posted: never updated or deleted (a mistake is fixed with
- * a stock adjustment, or a return to vendor in Phase 3e).
+ * a stock adjustment, or a return to vendor in Phase 3e). The one exception is each line's
+ * `billedQuantityMilli`, which vendor bills (Phase 3d) raise and lower with a conditional `$inc`.
  *
  * - `number` (GRN-00001) is taken from the organization's counter inside the posting transaction.
  * - `vendorSnapshot` is the vendor's details at posting (the PO's issue copy against a PO).
@@ -31,6 +32,8 @@ export interface IGoodsReceiptLine {
   stockValueMinor: number;
   stocked: boolean;
   quantityAfterMilli: number | null;
+  /** How much of this line is on vendor bills that are not void; never above quantityMilli. */
+  billedQuantityMilli: number;
   note: string | null;
 }
 
@@ -72,6 +75,7 @@ const lineSchema = new Schema<IGoodsReceiptLine>({
   stockValueMinor: { type: Number, required: true, min: 0, validate: integer },
   stocked: { type: Boolean, required: true },
   quantityAfterMilli: { type: Number, default: null },
+  billedQuantityMilli: { type: Number, default: 0, min: 0, validate: integer },
   note: { type: String, default: null },
 });
 
@@ -111,9 +115,10 @@ goodsReceiptSchema.index({ organizationId: 1, sequence: -1 });
 goodsReceiptSchema.index({ organizationId: 1, vendorId: 1, sequence: -1 });
 /** A PO's delivery history. */
 goodsReceiptSchema.index({ organizationId: 1, purchaseOrderId: 1, sequence: -1 });
+/** Catalog delete checks: has this variant ever been received? */
+goodsReceiptSchema.index({ organizationId: 1, "lines.variantId": 1 });
 
 const IMMUTABLE = [
-  "updateOne",
   "updateMany",
   "findOneAndUpdate",
   "replaceOne",
@@ -128,6 +133,29 @@ for (const method of IMMUTABLE) {
     throw new Error(`Goods receipts are final; ${method} is not allowed.`);
   });
 }
+
+/** `lines.$.billedQuantityMilli` or `lines.$[x].billedQuantityMilli`. */
+const BILLED_PATH = /^lines\.\$(\[[A-Za-z0-9]*\])?\.billedQuantityMilli$/;
+
+/** The only update a receipt accepts: `$inc` of lines' billed quantities (vendor bills). */
+export function isBilledQuantityUpdate(update: unknown): boolean {
+  if (!update || typeof update !== "object" || Array.isArray(update)) return false;
+  const inc = (update as Record<string, unknown>).$inc;
+  if (!inc || typeof inc !== "object") return false;
+  const fields = Object.keys(inc);
+  return (
+    // Mongoose adds $setOnInsert of createdAt (timestamps) to every update; it never applies without an upsert.
+    Object.keys(update).every((op) => op === "$inc" || op === "$setOnInsert") &&
+    fields.length > 0 &&
+    fields.every((field) => BILLED_PATH.test(field))
+  );
+}
+
+goodsReceiptSchema.pre("updateOne", function () {
+  if (!isBilledQuantityUpdate(this.getUpdate())) {
+    throw new Error("Goods receipts are final; updateOne may only change lines' billed quantities.");
+  }
+});
 
 goodsReceiptSchema.plugin(tenantScopePlugin, { scope: "organization+store", softDelete: false });
 
