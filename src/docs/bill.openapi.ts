@@ -40,8 +40,6 @@ const paymentIdParam = z.object({
   }),
 });
 
-const PREVIEW = "**Contract preview (Phase 3d):** documented for frontend review; returns 404 until implemented.";
-
 // ==========================================
 // Examples
 // ==========================================
@@ -169,8 +167,7 @@ registry.registerPath({
   tags: billTags,
   summary: "List vendor bills",
   description: [
-    PREVIEW,
-    "",
+
     readNote,
     "",
     "Paginated, newest bill number first. Bills still owed: `status=unpaid,partially_paid`; overdue: `overdue=true`; a vendor's open bills for a payment screen: `vendorId=…&status=unpaid,partially_paid`.",
@@ -195,7 +192,7 @@ registry.registerPath({
   path: billPath,
   tags: billTags,
   summary: "Get a vendor bill",
-  description: [PREVIEW, "", readNote, "", "With its lines and every payment allocated to it (void ones included)."].join("\n"),
+  description: [readNote, "", "With its lines and every payment allocated to it (void ones included)."].join("\n"),
   security,
   request: { params: billIdParam },
   responses: {
@@ -214,8 +211,7 @@ registry.registerPath({
   tags: billTags,
   summary: "Record a vendor bill",
   description: [
-    PREVIEW,
-    "",
+
     billWriteNote,
     "",
     "Records the vendor's invoice: what the organization owes. `vendorId` is required (a deactivated vendor can still be billed: deactivating does not cancel a debt). `vendorInvoiceNumber` is required and unique per vendor among bills that are not void.",
@@ -296,8 +292,7 @@ registry.registerPath({
   tags: billTags,
   summary: "Void a vendor bill",
   description: [
-    PREVIEW,
-    "",
+
     billWriteNote,
     "",
     "Cancels a bill entered by mistake. Allowed only while no payment that is not void is allocated to it: void those payments first. The bill keeps its number (status `void`, `voided`, `voidReason`); the receipt lines' `billedQuantity` goes back down, and its `vendorInvoiceNumber` can be used again.",
@@ -337,7 +332,7 @@ registry.registerPath({
   path: paymentBase,
   tags: paymentTags,
   summary: "List vendor payments",
-  description: [PREVIEW, "", readNote, "", "Paginated, newest payment number first.", "", LIST_RULES].join("\n"),
+  description: [readNote, "", "Paginated, newest payment number first.", "", LIST_RULES].join("\n"),
   security,
   request: { query: listVendorPaymentsQuerySchema },
   responses: {
@@ -356,7 +351,7 @@ registry.registerPath({
   path: paymentPath,
   tags: paymentTags,
   summary: "Get a vendor payment",
-  description: [PREVIEW, "", readNote, "", "`bills` in `data` is always empty here."].join("\n"),
+  description: [readNote, "", "`bills` in `data` is always empty here."].join("\n"),
   security,
   request: { params: paymentIdParam },
   responses: {
@@ -375,8 +370,7 @@ registry.registerPath({
   tags: paymentTags,
   summary: "Record a vendor payment",
   description: [
-    PREVIEW,
-    "",
+
     payWriteNote,
     "",
     "Records money paid to one vendor, split across one or more of its bills.",
@@ -442,8 +436,7 @@ registry.registerPath({
   tags: paymentTags,
   summary: "Void a vendor payment",
   description: [
-    PREVIEW,
-    "",
+
     payWriteNote,
     "",
     "Reverses a payment recorded by mistake (or a bounced cheque). Every allocation is reversed in the same step: each bill's `paid` goes down and its status moves back to `partially_paid` or `unpaid`. The payment keeps its number (status `void`, `voided`, `voidReason`). Payments cannot be edited: void and record again.",

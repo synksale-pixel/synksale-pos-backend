@@ -19,6 +19,7 @@ import { storeStockRouter, stockTransferRouter } from "./stock.routes";
 import vendorRouter from "./vendor.routes";
 import { storePurchaseOrderRouter, purchaseOrderRouter } from "./purchaseOrder.routes";
 import { storeGoodsReceiptRouter, goodsReceiptRouter } from "./goodsReceipt.routes";
+import { billRouter, vendorPaymentRouter } from "./bill.routes";
 
 const v1Router = Router();
 
@@ -55,5 +56,7 @@ v1Router.use("/stock-transfers", stockTransferRouter);
 v1Router.use("/vendors", vendorRouter);
 v1Router.use("/purchase-orders", purchaseOrderRouter);
 v1Router.use("/goods-receipts", goodsReceiptRouter);
+v1Router.use("/bills", billRouter);
+v1Router.use("/vendor-payments", vendorPaymentRouter);
 
 export default v1Router;

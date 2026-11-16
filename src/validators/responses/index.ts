@@ -1155,8 +1155,8 @@ export const GoodsReceiptLineSchema = z
     }),
     billedQuantity: quantity(
       0,
-      "How much of this line is on vendor bills that are not void (Phase 3d). Never above `quantity`. Optional while bills are a contract preview; always present once they ship."
-    ).optional(),
+      "How much of this line is on vendor bills that are not void. Never above `quantity`; `quantity − billedQuantity` is what is left to bill."
+    ),
     note: z.string().nullable().openapi({ example: "Batch 2026-10-B" }),
   })
   .openapi("GoodsReceiptLine");

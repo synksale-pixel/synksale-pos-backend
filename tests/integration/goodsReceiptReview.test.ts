@@ -1474,7 +1474,12 @@ describe("reads, numbering and size", () => {
   it("receipts stay readable after their product is deleted, vendor deactivated and creator deactivated", async () => {
     const res = await receive({ vendorId: localVendor, lines: [{ variantId: bags.variantId, quantity: 3, unitCost: "0.050" }] });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
-    expect((await request.delete(`${PRODUCTS}/${bags.productId}`).set(auth(admin))).status).toBe(200);
+    // Phase 3d: a received product cannot be deleted through the API any more (purchase history);
+    // data from before that rule may still have one, so delete it directly.
+    const refused = await request.delete(`${PRODUCTS}/${bags.productId}`).set(auth(admin));
+    expect([refused.status, refused.body.code]).toEqual([409, "PRODUCT_IN_USE"]);
+    await Product.updateOne({ _id: bags.productId }, { $set: { isDelete: true } });
+    await ProductVariant.updateMany({ productId: bags.productId }, { $set: { isDelete: true } });
     await Vendor.updateOne({ _id: localVendor }, { $set: { isActive: false } });
     await User.updateOne({ email: "admin@alnoor.test" }, { $set: { isDelete: true } });
     const live = await tokenFor(ctx.org._id, "viewer@alnoor.test", { orgRoleId: ctx.role("org_admin")._id });
