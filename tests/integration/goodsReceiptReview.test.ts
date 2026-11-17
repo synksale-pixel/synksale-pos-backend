@@ -1402,6 +1402,7 @@ describe("contract details", () => {
     const withVariant = await receive({ purchaseOrderId: po.id, lines: [{ purchaseOrderLineId: lineId, variantId: coffee.variantId, quantity: 1 }] });
     expect(withVariant.status).toBe(400);
     expect(withVariant.body.errors[0].path).toEqual(["lines", 0, "variantId"]);
+    expect(withVariant.body.errors[0].field).toBe("lines[0].variantId");
     const withVendor = await receive({ purchaseOrderId: po.id, vendorId: localVendor, lines: [{ purchaseOrderLineId: lineId, quantity: 1 }] });
     expect(withVendor.status).toBe(400);
     expect(withVendor.body.errors[0].path).toEqual(["vendorId"]);

@@ -1789,3 +1789,25 @@ keeps accepting `$setOnInsert`: Mongoose adds it for timestamps on every update.
 `tests/integration/billReview.test.ts` (63 tests). 1347 tests pass.
 
 Requestly: `docs/requestly/section-12-bills-payments.postman_collection.json` (117 requests).
+
+## Phase 3d cleanup: open review questions settled
+
+Changed:
+- **Schema errors carry `field`** (global handler, every route). Each Zod issue gets `field` in
+  request notation (`lines[0].quantity`, `variants[1].barcodes.isbn`), the same notation as
+  service-raised details, so the frontend maps every 400 by `errors[].field`. `path`, the Zod `code`
+  and `message` stay for existing clients. Swagger's shared `validation400` documents the shape.
+- **Positive `vatAdjustment` needs VAT on the lines.** A bill whose lines charge no VAT (vendor not
+  VAT-registered, or every product exempt/zero-rated) refuses a positive adjustment with 400
+  `VAT_ADJUSTMENT_WITHOUT_VAT` (`errors[0].field` = `vatAdjustment`): it would claim input VAT the
+  invoice does not show. `"0.000"` stays allowed; a negative one was already refused there
+  (`VAT_ADJUSTMENT_TOO_LARGE`, VAT cannot go negative).
+
+Kept as is:
+- A bill with a total of 0 is posted as `paid`.
+- Without a TRN a bill at the received price can show a 0.001 cost variance; it follows the
+  contract formula and has no effect without a ledger.
+- Vendor/product delete racing a bill create joins the deferred catalog delete races, to be fixed
+  in one hardening PR after 3e and before Phase 4 sales.
+
+1348 tests pass.

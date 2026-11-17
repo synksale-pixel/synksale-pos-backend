@@ -78,7 +78,7 @@ const REFERENCE_CODES = [
   "- `VENDOR_NOT_FOUND` / `VENDOR_INACTIVE`: a sent `purchase.preferredVendorId` does not exist in your organization, or the vendor is deactivated (`errors[0].field` is `purchase.preferredVendorId`).",
 ];
 const BODY_CODES =
-  '- `VALIDATION_FAILED`: a schema or cross-field rule (see the Rules in the create description). For schema errors `errors` lists each issue with its `path`. The service raises the same code for rules that depend on stored state, as `errors[0]` = `{ field, code: "VALIDATION_FAILED", message }`.';
+  '- `VALIDATION_FAILED`: a schema or cross-field rule (see the Rules in the create description). For schema errors `errors` lists each issue with its `field` (e.g. `variants[0].sku`) and raw `path`. The service raises the same code for rules that depend on stored state, as `errors[0]` = `{ field, code: "VALIDATION_FAILED", message }`.';
 
 const malformedId400 = errorResponse(
   "Malformed `productId` / `variantId` in the path.",

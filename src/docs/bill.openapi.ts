@@ -144,7 +144,7 @@ const BILL_MONEY_RULES = [
   "**Amounts and VAT** (organization currency only; no foreign-currency bills in v1)",
   "- `unitCost` is VAT-exclusive, at the currency's decimals. `subtotal` = quantity × unitCost, rounded.",
   "- VAT per line: only when the vendor (as copied onto the bill) is `vat_registered` and the product is `standard`. The rate defaults to the receipt line's PO rate, else the product's, else the organization's default; send `taxRateId` to match the invoice, or `null` for no VAT. An `overseas` vendor's bill carries no VAT in v1 (reverse charge comes with the VAT return).",
-  `- \`vatAdjustment\`: when the vendor rounded VAT on the invoice total, enter the difference (at most ${MAX_VAT_ADJUSTMENT_MINOR} of the currency's smallest unit either way) so \`total\` matches the paper invoice.`,
+  `- \`vatAdjustment\`: when the vendor rounded VAT on the invoice total, enter the difference (at most ${MAX_VAT_ADJUSTMENT_MINOR} of the currency's smallest unit either way) so \`total\` matches the paper invoice. A positive adjustment needs at least one line that charges VAT.`,
   "- `costVariance` on goods lines: what the line costs minus what the receipt put into stock for the same quantity. For an organization with no TRN the comparison includes VAT (it is part of the cost), so a VAT figure different from the receipt's estimate shows up here too. Stock is never revalued.",
 ].join("\n");
 
@@ -251,6 +251,7 @@ registry.registerPath({
         "Bad request. Codes:",
         "- `VALIDATION_FAILED`: a schema rule (see `errors`), a missing or malformed `Idempotency-Key`, a `billDate` in the future or before a billed receipt's `receivedDate`, a `dueDate` before `billDate`, or a fractional quantity for a whole-number unit.",
         `- \`VAT_ADJUSTMENT_TOO_LARGE\`: \`vatAdjustment\` is more than ${MAX_VAT_ADJUSTMENT_MINOR} of the currency's smallest unit either way, or has more decimals than the currency.`,
+        "- `VAT_ADJUSTMENT_WITHOUT_VAT`: a positive `vatAdjustment` on a bill whose lines charge no VAT (it would claim input VAT the invoice does not show). `errors[0].field` is `vatAdjustment`.",
         "- `VENDOR_NOT_FOUND`: `vendorId` does not exist in your organization (`errors[0].field` is `vendorId`).",
         "- Line problems are collected in one response, one `errors` item per bad line; the top-level `code` is the first item's:",
         "  - `VENDOR_MISMATCH`: the receipt is from a different vendor (`meta: { goodsReceiptNumber }`).",

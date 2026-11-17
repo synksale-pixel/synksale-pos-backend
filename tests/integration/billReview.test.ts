@@ -254,7 +254,7 @@ async function footprint() {
 }
 
 /** Zod errors carry `path` (the global handler's shape), service errors carry `field`. */
-const fieldOf = (e: { field?: string; path?: (string | number)[] }) => e.field ?? e.path?.join(".");
+const fieldOf = (e: { field?: string }) => e.field;
 
 const strictOk = (schema: z.ZodTypeAny, value: unknown) => {
   const parsed = schema.safeParse(value);
@@ -538,19 +538,19 @@ describe("error codes, statuses and field paths", () => {
       [{ vendorInvoiceNumber: "  " }, "vendorInvoiceNumber"],
       [{ vendorInvoiceNumber: "x".repeat(51) }, "vendorInvoiceNumber"],
       [{ lines: [] }, "lines"],
-      [{ lines: [{}] }, "lines.0"],
-      [{ lines: [{ variantId: delivery.variantId }] }, "lines.0.quantity"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: 1 }] }, "lines.0.unitCost"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: 0, unitCost: "1.000" }] }, "lines.0.quantity"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: -1, unitCost: "1.000" }] }, "lines.0.quantity"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: 0.0005, unitCost: "1.000" }] }, "lines.0.quantity"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: "1", unitCost: "1.000" }] }, "lines.0.quantity"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: 1 }] }, "lines.0.unitCost"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: "-1.000" }] }, "lines.0.unitCost"],
-      [{ lines: [{ goodsReceiptId: OBJECT_ID }] }, "lines.0.goodsReceiptLineId"],
-      [{ lines: [{ goodsReceiptLineId: OBJECT_ID }] }, "lines.0.goodsReceiptId"],
-      [{ lines: [{ goodsReceiptId: OBJECT_ID, goodsReceiptLineId: OBJECT_ID, variantId: OBJECT_ID }] }, "lines.0.variantId"],
-      [{ lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: "1.000", extra: 1 }] }, "lines.0"],
+      [{ lines: [{}] }, "lines[0]"],
+      [{ lines: [{ variantId: delivery.variantId }] }, "lines[0].quantity"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: 1 }] }, "lines[0].unitCost"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: 0, unitCost: "1.000" }] }, "lines[0].quantity"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: -1, unitCost: "1.000" }] }, "lines[0].quantity"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: 0.0005, unitCost: "1.000" }] }, "lines[0].quantity"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: "1", unitCost: "1.000" }] }, "lines[0].quantity"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: 1 }] }, "lines[0].unitCost"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: "-1.000" }] }, "lines[0].unitCost"],
+      [{ lines: [{ goodsReceiptId: OBJECT_ID }] }, "lines[0].goodsReceiptLineId"],
+      [{ lines: [{ goodsReceiptLineId: OBJECT_ID }] }, "lines[0].goodsReceiptId"],
+      [{ lines: [{ goodsReceiptId: OBJECT_ID, goodsReceiptLineId: OBJECT_ID, variantId: OBJECT_ID }] }, "lines[0].variantId"],
+      [{ lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: "1.000", extra: 1 }] }, "lines[0]"],
       [{ billDate: "2026-11-05", dueDate: "2026-11-04" }, "dueDate"],
       [{ notes: "" }, "notes"],
       [{ vatAdjustment: 1 }, "vatAdjustment"],

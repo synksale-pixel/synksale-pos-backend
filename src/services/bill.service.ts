@@ -122,6 +122,13 @@ function vatAdjustmentTooLarge(decimals: number): ApiError {
   ]);
 }
 
+function vatAdjustmentWithoutVat(): ApiError {
+  const message = "vatAdjustment cannot add VAT to a bill whose lines charge no VAT.";
+  return ApiError.coded(400, "VAT_ADJUSTMENT_WITHOUT_VAT", message, [
+    { field: "vatAdjustment", code: "VAT_ADJUSTMENT_WITHOUT_VAT", message },
+  ]);
+}
+
 function parseVatAdjustment(text: string | undefined, decimals: number): number {
   if (text === undefined) return 0;
   let minor: number;
@@ -714,7 +721,11 @@ export async function createBill(organizationId: string, input: CreateBillInput,
   // Priced before the 409 checks: an adjustment that makes the VAT negative is a 400 and comes first.
   const lines: IBillLine[] = planned.map((line) => ({ _id: new mongoose.Types.ObjectId(), ...priceLine(line, vendor, settings) }));
   const subtotalMinor = sumMoney(lines.map((line) => line.subtotalMinor));
-  const taxMinor = sumMoney([...lines.map((line) => line.taxMinor), vatAdjustmentMinor]);
+  const linesTaxMinor = sumMoney(lines.map((line) => line.taxMinor));
+  // A rounding correction only exists where VAT was charged: adding VAT to a bill whose lines
+  // carry none would claim input VAT the invoice does not show (a VAT-return error in the GCC).
+  if (linesTaxMinor === 0 && vatAdjustmentMinor > 0) throw vatAdjustmentWithoutVat();
+  const taxMinor = sumMoney([linesTaxMinor, vatAdjustmentMinor]);
   if (taxMinor < 0) throw vatAdjustmentTooLarge(settings.decimals);
   const totalMinor = sumMoney([subtotalMinor, taxMinor]);
 

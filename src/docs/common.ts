@@ -40,9 +40,11 @@ export function errorResponse(
 export const json = <T>(schema: T) => ({ "application/json": { schema } });
 
 export const validation400 = errorResponse(
-  "Request validation failed (Zod). `errors` contains the Zod issues.",
+  "Request validation failed (Zod). `errors` has one item per Zod issue: `field` in request notation (`lines[0].quantity`, the same as service-raised details), plus the raw `path`, Zod `code` and `message`.",
   "Request Validation Failed: email: Invalid email format.",
-  400
+  400,
+  "VALIDATION_FAILED",
+  [{ field: "email", path: ["email"], code: "invalid_string", message: "Invalid email format." }]
 );
 export const server500 = errorResponse(
   "Unexpected server error.",
