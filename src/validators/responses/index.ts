@@ -791,7 +791,7 @@ export const StockMovementSchema = z
     product: StockProductRefSchema,
     type: z.string().openapi({
       description:
-        "`opening`, `adjustment`, `transfer_out`, `transfer_in`, or `purchase` (a goods receipt, from Phase 3c). Later phases will add `purchase_return`, `sale` and `sale_return`: show unknown types as they are rather than failing.",
+        "`opening`, `adjustment`, `transfer_out`, `transfer_in`, `purchase` (a goods receipt, from Phase 3c) or `vendor_return` (goods sent back to the vendor, from Phase 3e). Later phases will add `sale` and `sale_return`: show unknown types as they are rather than failing.",
       example: "adjustment",
     }),
     quantityChange: quantity(-2, "Signed: positive adds stock, negative removes it."),
@@ -802,7 +802,7 @@ export const StockMovementSchema = z
       .object({
         type: z.string().openapi({
           description:
-            "`product` (opening stock entered when the product or variant was created), `adjustment`, `transfer`, or `goods_receipt` (from Phase 3c). Later phases will add more: show unknown values as they are.",
+            "`product` (opening stock entered when the product or variant was created), `adjustment`, `transfer`, `goods_receipt` (from Phase 3c) or `vendor_return` (from Phase 3e; `number` is the RTN- number). Later phases will add more: show unknown values as they are.",
           example: "adjustment",
         }),
         id: objectId("665f1c2e8a4b3c0012ab3a00", "The id of the source record."),
@@ -1157,13 +1157,13 @@ export const GoodsReceiptLineSchema = z
       0,
       "How much of this line is on vendor bills that are not void. Never above `quantity`; see `billableQuantity` for what is left to bill."
     ),
-    returnedQuantity: quantity(2).optional().openapi({
+    returnedQuantity: quantity(2).openapi({
       description:
-        "Phase 3e (contract preview; always present once returns ship): how much of this line went back to the vendor on returns. Never above `quantity`.",
+        "Phase 3e: how much of this line went back to the vendor on returns. Never above `quantity`.",
     }),
-    billableQuantity: quantity(20).optional().openapi({
+    billableQuantity: quantity(20).openapi({
       description:
-        "Phase 3e (contract preview; always present once returns ship): what is left to bill: `quantity − billedQuantity −` the returned quantity that had not been billed. A return takes unbilled goods first, so it lowers this before it credits any bill.",
+        "Phase 3e: what is left to bill: `quantity − billedQuantity −` the returned quantity that had not been billed. A return takes unbilled goods first, so it lowers this before it credits any bill.",
     }),
     note: z.string().nullable().openapi({ example: "Batch 2026-10-B" }),
   })
@@ -1245,9 +1245,9 @@ const billCore = {
   total: money("43.558", "subtotal + tax: what is owed for this bill."),
   paid: money("20.000", "Sum of the allocations of payments that are not void."),
   balanceDue: money("23.558", "total − paid − credited. \"0.000\" once paid, and for a void bill."),
-  credited: money("0.000").optional().openapi({
+  credited: money("0.000").openapi({
     description:
-      "Phase 3e (contract preview; always present once debit notes ship): debit note credit applied to this bill (its own notes and spare credit applied from others), VAT included, notes that are not void only. Counts toward `paid` status like a payment.",
+      "Phase 3e: debit note credit applied to this bill (its own notes and spare credit applied from others), VAT included, notes that are not void only. Counts toward `paid` status like a payment.",
     example: "0.000",
   }),
   costVariance: signedMoney(
@@ -1313,12 +1313,12 @@ export const BillLineSchema = z
       "1.200",
       "Goods lines: what this line costs the business minus what the receipt put into stock for the same quantity. With a TRN: subtotal − quantity × receipt `unitCost`. Without a TRN (VAT is part of the cost): total − quantity × receipt `stockUnitCost`. \"0.000\" on a service line."
     ),
-    returnedQuantity: quantity(1).optional().openapi({
-      description: "Phase 3e (contract preview): how much of this line's quantity returns credited. Never above `quantity`.",
+    returnedQuantity: quantity(1).openapi({
+      description: "Phase 3e: how much of this line's quantity returns credited. Never above `quantity`.",
     }),
-    credited: money("1.650").optional().openapi({
+    credited: money("1.650").openapi({
       description:
-        "Phase 3e (contract preview): VAT-exclusive amount credited on this line by debit notes that are not void (returns at `unitCost`, and price adjustments). Never above `subtotal`.",
+        "Phase 3e: VAT-exclusive amount credited on this line by debit notes that are not void (returns at `unitCost`, and price adjustments). Never above `subtotal`.",
       example: "1.650",
     }),
     note: z.string().nullable().openapi({ example: "Price increase from 1 Nov" }),
@@ -1360,10 +1360,9 @@ export const BillSchema = z
           })
           .openapi("BillDebitNoteRef")
       )
-      .optional()
       .openapi({
         description:
-          "Phase 3e (contract preview; always present once debit notes ship): every debit note that credited this bill, oldest first, void ones included: notes against it and notes whose spare credit was applied to it.",
+          "Phase 3e: every debit note that credited this bill, oldest first, void ones included: notes against it and notes whose spare credit was applied to it.",
       }),
     voided: statusEventOf("null unless voided."),
     voidReason: z.string().nullable().openapi({ example: null as unknown as string }),

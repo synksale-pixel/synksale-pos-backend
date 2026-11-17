@@ -1907,3 +1907,63 @@ reasons, the bill line pair, duplicates, amounts, apply and void.
 `tests/integration/vendorReturnContract.test.ts` covers role seeding and the sync for existing
 organizations, store-scope custom roles, the 404 preview routes, the OpenAPI paths and schemas,
 and that the new receipt and bill fields are optional. 1371 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3e implementation (vendor returns + debit notes)
+
+The contract from PR #24 is live. The preview notes are gone, and the new receipt and bill fields
+(`returnedQuantity`, `billableQuantity`, `credited`, `debitNotes`) are always present.
+
+- **Models:** `VendorReturn` is store-scoped, immutable and numbered RTN-. `DebitNote` is
+  organization-scoped, numbered DN-, and changes only through applications and void. New
+  `DocumentCounter` types are `vendor_return` and `debit_note`. There is a new `vendor_return`
+  movement type and source type (the stock history docs had promised `purchase_return`; they now
+  say `vendor_return`).
+- **Receipt lines:** gain `returnedQuantityMilli` and `returnedUnbilledMilli`.
+  `billableMilli = quantity − billed − returnedUnbilled` now drives the bill's default quantity,
+  the over-billing check and the `$inc` ceiling. The receipt update guard accepts the two new
+  counters.
+- **Bill lines:** gain `returnedQuantityMilli`, `creditedMinor` and `creditedTaxMinor`. VAT
+  credited on a line is capped at the line's VAT, and the credit that takes the rest of the
+  subtotal takes exactly the rest of the VAT. So several returns of one line add up to the line's
+  VAT to the fil.
+- **Bills:** gain `creditedMinor`. `balanceDue = total − paid − credited`. Status counts payments
+  and credit alike (`statusForPaid(total, paid + credited)` in payments, payment voids, notes and
+  applications). A payment over the credited balance is refused with `PAYMENT_EXCEEDS_DUE`.
+- **Returns:**
+  - Each line takes unbilled goods first. The billed rest is credited on the named bill line at
+    its `unitCost`, capped at what the line has left.
+  - One debit note is created per bill, applied to that bill as far as it owes. Any leftover
+    stays as open vendor credit.
+  - Stock always has to be on hand, even with `allowNegativeStock`. The receipt line is written
+    only while its three counters are as read.
+  - Untracked goods are recorded with no movement.
+  - Return costs are null without `inventory:read` for the store, in the list and the detail.
+- **Debit notes:** price adjustments; applying spare credit to the same vendor's open bills; void
+  of price adjustments only (reverses every application and the bill lines' credit).
+  `BILL_HAS_CREDITS` refuses a bill void while any debit note that isn't void credited the bill.
+- **Product/variant delete:** no new check. Every return line is on a goods receipt and every debit
+  note line is on a bill, and both are already in-use checks that are never deleted.
+- **Routes:** `/stores/:storeId/vendor-returns` (mounted before the stock router, like receipts),
+  `/vendor-returns`, `/debit-notes`. `scripts/syncIndexes.ts` lists both new models.
+
+### Deploy note
+
+Run `npm run migrate` for the new indexes (`purchase:return` was seeded with the contract).
+
+Testing:
+- `tests/integration/vendorReturns.test.ts` (19 tests):
+  - unbilled-first returns, credit on the named bill line, exact VAT over several returns;
+  - paid bills keeping vendor credit, and applying it (every 409);
+  - price adjustments and their void, `BILL_HAS_CREDITS`, payments after credit;
+  - stock needed even with negative stock allowed, dates, every 400/404 code;
+  - idempotent replay, permissions and hidden costs;
+  - lists and filters, and strict response schemas.
+- The contract test now checks that the routes are live and the new fields required.
+- 1390 tests pass.
+- Not yet covered: races (two returns of one receipt line, a return racing a bill or a
+  payment). They rely on the same write-conflict pattern as 3c/3d; a pos-tester review should
+  add them.
+
+Requestly: `docs/requestly/section-13-vendor-returns.postman_collection.json` (87 requests).

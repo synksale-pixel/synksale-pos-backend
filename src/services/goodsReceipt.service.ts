@@ -16,7 +16,7 @@
  */
 
 import mongoose from "mongoose";
-import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine } from "../models/goodsReceipt.model";
+import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine, billableMilli } from "../models/goodsReceipt.model";
 import { PurchaseOrder, PurchaseOrderDocument, IPurchaseOrderLine, IPurchaseOrderVendorSnapshot } from "../models/purchaseOrder.model";
 import { DocumentCounter } from "../models/documentCounter.model";
 import { Vendor, VendorDocument } from "../models/vendor.model";
@@ -374,6 +374,8 @@ function detailView(ctx: ViewContext, receipt: GoodsReceiptDocument) {
       quantityAfter: line.quantityAfterMilli === null || line.quantityAfterMilli === undefined ? null : fromMilli(line.quantityAfterMilli),
       // Receipts posted before Phase 3d have no billed quantity stored: nothing billed.
       billedQuantity: fromMilli(line.billedQuantityMilli ?? 0),
+      returnedQuantity: fromMilli(line.returnedQuantityMilli ?? 0),
+      billableQuantity: fromMilli(billableMilli(line)),
       note: line.note ?? null,
     })),
   };
@@ -638,6 +640,8 @@ export async function createGoodsReceipt(
       stocked,
       quantityAfterMilli,
       billedQuantityMilli: 0,
+      returnedQuantityMilli: 0,
+      returnedUnbilledMilli: 0,
       note: line.note,
     });
   }

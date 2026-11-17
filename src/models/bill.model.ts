@@ -2,7 +2,10 @@
  * Purpose: Bill model definition (vendor bills, Phase 3d).
  * The vendor's invoice: what the organization owes. Organization-level (one invoice can cover
  * several stores' deliveries) and posted on create: no drafts, edits or deletes. The only
- * changes after posting are payments (`paidMinor`, `status`) and a void.
+ * changes after posting are payments (`paidMinor`), debit note credit (`creditedMinor` and the
+ * lines' credited amounts, Phase 3e), the `status` they lead to, and a void.
+ *
+ * balanceDue = totalMinor − paidMinor − creditedMinor.
  *
  * - `number` (BILL-00001) is taken from the organization's counter inside the posting transaction.
  * - `vendorSnapshot` is the vendor's details at posting; its `vatTreatment` decided the VAT.
@@ -46,8 +49,18 @@ export interface IBillLine extends IPurchaseOrderLineTax {
   totalMinor: number;
   /** Signed: what the line costs minus what the receipt put into stock for the same quantity. */
   costVarianceMinor: number;
+  /** Quantity credited by vendor returns; never above quantityMilli. */
+  returnedQuantityMilli: number;
+  /** VAT-exclusive amount credited by debit notes that are not void; never above subtotalMinor. */
+  creditedMinor: number;
+  /** VAT credited with it; never above taxMinor, so credits round to exactly the line's VAT. */
+  creditedTaxMinor: number;
   note: string | null;
 }
+
+/** What a bill still owes (bills posted before 3e have no credit stored). */
+export const billDueMinor = (bill: Pick<IBill, "totalMinor" | "paidMinor" | "creditedMinor">): number =>
+  bill.totalMinor - bill.paidMinor - (bill.creditedMinor ?? 0);
 
 export interface IBill {
   organizationId: mongoose.Types.ObjectId;
@@ -72,6 +85,8 @@ export interface IBill {
   vatAdjustmentMinor: number;
   totalMinor: number;
   paidMinor: number;
+  /** Debit note credit applied to this bill (VAT included). */
+  creditedMinor: number;
   costVarianceMinor: number;
   version: number;
   createdBy: mongoose.Types.ObjectId;
@@ -115,6 +130,9 @@ const lineSchema = new Schema<IBillLine>({
   taxMinor: { type: Number, required: true, min: 0, validate: integer },
   totalMinor: { type: Number, required: true, min: 0, validate: integer },
   costVarianceMinor: { type: Number, required: true, validate: integer },
+  returnedQuantityMilli: { type: Number, default: 0, min: 0, validate: integer },
+  creditedMinor: { type: Number, default: 0, min: 0, validate: integer },
+  creditedTaxMinor: { type: Number, default: 0, min: 0, validate: integer },
   note: { type: String, default: null },
 });
 
@@ -155,6 +173,7 @@ const billSchema = new Schema<IBill, BillModel>(
     vatAdjustmentMinor: { type: Number, required: true, default: 0, validate: integer },
     totalMinor: { type: Number, required: true, min: 0, validate: integer },
     paidMinor: { type: Number, required: true, default: 0, min: 0, validate: integer },
+    creditedMinor: { type: Number, default: 0, min: 0, validate: integer },
     costVarianceMinor: { type: Number, required: true, default: 0, validate: integer },
     version: { type: Number, required: true, default: 1 },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
