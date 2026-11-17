@@ -397,6 +397,15 @@ describe("VAT", () => {
     expect(service.body.code).toBe("VAT_ADJUSTMENT_TOO_LARGE");
   });
 
+  it("a positive vatAdjustment needs VAT on the lines; a negative one still needs room", async () => {
+    const res = await postBill({ vendorId: localVendor, vendorInvoiceNumber: "NV1", vatAdjustment: "0.001", lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: "1.000" }] });
+    expect([res.status, res.body.code]).toEqual([400, "VAT_ADJUSTMENT_WITHOUT_VAT"]);
+    expect(res.body.errors[0]).toMatchObject({ field: "vatAdjustment", code: "VAT_ADJUSTMENT_WITHOUT_VAT" });
+    // Zero is no adjustment at all and stays allowed.
+    const zero = await billOk({ vendorId: localVendor, vendorInvoiceNumber: "NV2", vatAdjustment: "0.000", lines: [{ variantId: delivery.variantId, quantity: 1, unitCost: "1.000" }] });
+    expect(zero).toMatchObject({ vatAdjustment: "0.000", tax: "0.000" });
+  });
+
   it("without a TRN the cost variance compares totals (VAT is part of the cost)", async () => {
     await Organization.updateOne({ _id: ctx.org._id }, { $set: { taxRegistrationNumber: null } });
     const grn = await receipt();

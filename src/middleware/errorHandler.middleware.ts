@@ -13,6 +13,14 @@ import logger from "../config/logger.config";
  * Recursively redacts sensitive keys from request payloads to prevent credential leaking in logs.
  * Supports deeply nested objects, arrays, and primitive values.
  */
+/** Zod path → request field: ["lines", 0, "quantity"] → "lines[0].quantity"; [] → "". */
+export function formatFieldPath(path: ReadonlyArray<string | number>): string {
+  return path.reduce<string>(
+    (field, part) => (typeof part === "number" ? `${field}[${part}]` : field ? `${field}.${String(part)}` : String(part)),
+    ""
+  );
+}
+
 function redact(data: unknown): unknown {
   if (data === null || data === undefined) {
     return data;
@@ -137,11 +145,16 @@ export const globalErrorHandler = (
     ) {
       // Translates Zod request body validation schema failures
       const zodErr = err as unknown as {
-        issues: Array<{ path: string[]; message: string }>;
+        issues: Array<{ path: Array<string | number>; message: string }>;
       };
-      const issues = zodErr.issues || [];
+      // `field` uses the same notation as service-raised details (`lines[0].quantity`), so the
+      // frontend maps every 400 the same way; `path` is kept for existing clients.
+      const issues = (zodErr.issues || []).map((i) => ({
+        field: formatFieldPath(i.path ?? []),
+        ...i,
+      }));
       const formattedMsg = issues
-        .map((i) => `${i.path.join(".")}: ${i.message}`)
+        .map((i) => `${i.field || "body"}: ${i.message}`)
         .join(", ");
       error = new ApiError(
         400,
