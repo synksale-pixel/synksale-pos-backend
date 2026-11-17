@@ -71,7 +71,7 @@ const createNote = [
 
 const WHAT_IT_DOES = [
   "**What a receipt does** (all in one step, all or nothing):",
-  "- Posts the receipt with its number (GRN-00001, GRN-00002…, per organization). It is **final**: no drafts, edits or void. Fix a mistake with a stock adjustment (or a return to vendor, Phase 3e).",
+  "- Posts the receipt with its number (GRN-00001, GRN-00002…, per organization). It is **final**: no drafts, edits or void. Fix a mistake with a stock adjustment, or send goods back with a vendor return (Phase 3e).",
   "- Adds stock in this store for each line whose product tracks inventory: a `purchase` movement at `stockUnitCost`, recalculating the weighted average cost. The movement is dated when the receipt is posted; `receivedDate` is shown on the receipt but never rewrites stock history.",
   "- Lines for goods that do not track inventory are recorded (`stocked: false`) but change no stock.",
   "- Against a PO: adds to each PO line's `receivedQuantity` and sets the PO to `partially_received`, or `received` once every line is complete. The PO's `version` goes up by one, so an edit someone had open on it gets `PURCHASE_ORDER_VERSION_CONFLICT`; from the first receipt the PO is locked.",

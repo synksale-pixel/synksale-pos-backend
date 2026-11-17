@@ -47,14 +47,14 @@ export const MAX_VAT_ADJUSTMENT_MINOR = 5;
 const MAX_BILL_LINES = 200;
 const MAX_ALLOCATIONS = 100;
 
-const optionalText = (label: string, max: number) =>
+export const optionalText = (label: string, max: number) =>
   z
     .string()
     .trim()
     .min(1, { message: `${label} cannot be empty. Omit it instead.` })
     .max(max, { message: `${label} must be at most ${max} characters long.` });
 
-const dateField = (label: string) =>
+export const dateField = (label: string) =>
   z
     .string()
     .trim()
@@ -78,9 +78,9 @@ export function toThousandths(value: string): bigint {
   return negative ? -milli : milli;
 }
 
-const isPositiveAmount = (value: string) => toThousandths(value) > 0n;
+export const isPositiveAmount = (value: string) => toThousandths(value) > 0n;
 
-const versionField = (document: string, conflictCode: string) =>
+export const versionField = (document: string, conflictCode: string) =>
   z
     .number({ required_error: "version is required.", invalid_type_error: "version must be a number." })
     .int({ message: "version must be a whole number." })
@@ -90,7 +90,7 @@ const versionField = (document: string, conflictCode: string) =>
       example: 1,
     });
 
-const reasonField = (document: string) =>
+export const reasonField = (document: string) =>
   z
     .string({ required_error: "reason is required." })
     .trim()
@@ -98,7 +98,7 @@ const reasonField = (document: string) =>
     .max(500, { message: "reason must be at most 500 characters long." })
     .openapi({ description: `Why the ${document} is voided; kept on it.`, example: "Entered against the wrong vendor." });
 
-function duplicateValues(values: string[]): string[] {
+export function duplicateValues(values: string[]): string[] {
   const seen = new Set<string>();
   const dup = new Set<string>();
   for (const value of values.map((v) => v.toLowerCase())) {

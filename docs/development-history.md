@@ -1811,3 +1811,99 @@ Kept as is:
   in one hardening PR after 3e and before Phase 4 sales.
 
 1348 tests pass.
+
+---
+
+## 🧾 Purchases — Phase 3e contract (vendor returns + debit notes: validators + Swagger, no endpoints yet)
+
+The **Vendor Returns** and **Debit Notes** endpoints are documented in Swagger with a "contract
+preview" note and return 404 until implemented: `GET /vendor-returns` (all stores),
+`GET/POST /stores/{storeId}/vendor-returns`, `GET /stores/{storeId}/vendor-returns/{vendorReturnId}`,
+`GET/POST /debit-notes`, `GET /debit-notes/{debitNoteId}`, `POST /debit-notes/{debitNoteId}/apply`,
+`POST /debit-notes/{debitNoteId}/void`. Returns have no edit, delete or void.
+
+Decisions (approved 2026-11-17; the user chose the tech lead's recommendation on every call):
+
+1. **Two documents.** A vendor return moves stock and belongs to a store (RTN-00001). A debit
+   note is money and belongs to the organization (DN-00001), always against one bill (the
+   invoice it corrects, as GCC VAT rules expect).
+2. Every return line names a goods receipt line of **this store** and the return's vendor. That
+   line supplies the vendor, the cost and the ceiling (`returnedQuantity` ≤ received).
+3. Returns are posted on create and final, like receipts. Goods sent back by mistake come in again
+   on a new receipt.
+4. **Unbilled first.** A return uses up the receipt line's unbilled quantity before anything
+   else. That part creates no debit note, only a lower `billableQuantity`. The billed rest is
+   credited on a bill line that **the client names** (`billId` + `billLineId`, needed only when
+   `quantity` > `billableQuantity`, `BILL_LINE_REQUIRED` otherwise). One debit note is created
+   per bill credited, in the same transaction.
+5. Return credit: quantity × the bill line's `unitCost`, VAT reversed at the bill line's rate.
+   A bill line's credits from returns and price adjustments together never exceed its
+   `subtotal`.
+6. Stock leaves at the store's **current average cost**, so the average stays unchanged. The
+   new movement type is `vendor_return`. Untracked goods are recorded with `stocked: false`.
+   There is no quarantine bucket: the stock must be on hand (`INSUFFICIENT_STOCK`). Return
+   damaged goods before adjusting them out.
+7. Return reasons are a fixed list: `damaged`, `expired`, `wrong_item`, `excess`, `other`, one
+   per return. `vendorReference` holds the vendor's RMA number.
+8. **Price adjustment debit notes** (`POST /debit-notes`) need a `billId`, a `reason`, and
+   VAT-exclusive `amount` per bill line (goods or service). They never revalue stock or change
+   `costVariance`.
+9. **Credit applies to the note's own bill first**, up to its `balanceDue`. Bills gain
+   `credited`, `balanceDue = total − paid − credited`, and status counts credit like payment.
+   Anything left over is **unapplied vendor credit** (`status: open`), applied to the same
+   vendor's open bills with `POST /debit-notes/{id}/apply`. Vendor cash refunds come in 3e.2.
+10. Price adjustments can be voided (with `version` and `reason`), which reverses every
+    application. A return's note cannot (`DEBIT_NOTE_FROM_RETURN`).
+11. A bill credited by a debit note that is not void cannot be voided (`BILL_HAS_CREDITS`).
+12. **New permission `purchase:return`** (store scope), seeded on store_manager. org_admin gets it
+    from the catalog, and custom store roles can hold it. It is not on inventory_clerk. Price
+    adjustments, apply and void need `purchase:bill`. A return's own debit notes need no bill
+    permission, because their amounts come from the bill. Debit note reads need `purchase:read`
+    from an organization-scoped role. Return costs (average cost) are null without
+    `inventory:read`.
+13. Dates: `returnDate` uses the store's timezone; it can't be in the future, before a returned
+    receipt's `receivedDate`, or before a credited bill's `billDate`. A return's note takes the
+    `returnDate`. `debitNoteDate` uses the organization's timezone; it can't be in the future or
+    before the bill's `billDate`.
+14. Returns and debit notes count toward the vendor's `purchaseDocumentCount`. Deactivated
+    vendors are fine; deactivated stores cannot return.
+15. `Idempotency-Key` on return create, debit note create, apply and void. Conditional `$inc` on
+    the receipt line, bill line and bill so races retry, as in 3c and 3d.
+16. Product and variant delete also refuse when a return line or debit note line uses the
+    variant.
+
+- **Error codes:** new `VENDOR_RETURN_NOT_FOUND`, `DEBIT_NOTE_NOT_FOUND`, `BILL_LINE_MISMATCH`,
+  `RETURNED_QUANTITY_EXCEEDS_RECEIVED`, `BILL_LINE_REQUIRED`, `CREDITED_QUANTITY_EXCEEDS_BILLED`,
+  `CREDIT_EXCEEDS_BILLED`, `CREDIT_EXCEEDS_AVAILABLE`, `CREDIT_EXCEEDS_DUE`,
+  `DEBIT_NOTE_VERSION_CONFLICT`, `DEBIT_NOTE_STATUS_CONFLICT`, `DEBIT_NOTE_FROM_RETURN`,
+  `BILL_HAS_CREDITS`. Existing vendor, receipt, bill, stock, money and idempotency codes are
+  reused.
+- **Other contract changes (optional in the schemas while in preview):** `GoodsReceiptLine`
+  gains `returnedQuantity` and `billableQuantity`. `Bill`/`BillSummary` gain `credited`, and
+  `Bill` gains `debitNotes`. `BillLine` gains `returnedQuantity` and `credited`. The
+  product/variant/vendor delete docs name returns and debit notes. The `purchase:bill` label now
+  covers debit notes.
+
+For the implementation:
+
+- `VendorReturn` model (store and organization scoped) and `DebitNote` model (organization
+  scoped). Add `vendor_return` / `debit_note` `DocumentCounter` types and the `vendor_return`
+  movement and source type.
+- Receipt lines: `returnedQuantityMilli` and `returnedUnbilledMilli` (billing room = received −
+  billed − returned unbilled). The receipt update guard allows these two `$inc`s besides
+  `billedQuantityMilli`.
+- Bill lines: `returnedQuantityMilli` and `creditedMinor`. Bills: `creditedMinor`, with status
+  computed from paid + credited (`statusForPaid` callers, payment `PAYMENT_EXCEEDS_DUE` against
+  the new `balanceDue`).
+- The product/variant in-use check and `lines.variantId` indexes on both new collections.
+
+### Deploy note
+
+Run `npm run migrate` (it includes `sync:system-roles`) so existing organizations' org_admin and
+store_manager roles receive `purchase:return`.
+
+Testing: `tests/unit/vendorReturnValidator.test.ts` pins the contract: Swagger examples parse,
+reasons, the bill line pair, duplicates, amounts, apply and void.
+`tests/integration/vendorReturnContract.test.ts` covers role seeding and the sync for existing
+organizations, store-scope custom roles, the 404 preview routes, the OpenAPI paths and schemas,
+and that the new receipt and bill fields are optional. 1371 tests pass.

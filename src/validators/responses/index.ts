@@ -1155,8 +1155,16 @@ export const GoodsReceiptLineSchema = z
     }),
     billedQuantity: quantity(
       0,
-      "How much of this line is on vendor bills that are not void. Never above `quantity`; `quantity − billedQuantity` is what is left to bill."
+      "How much of this line is on vendor bills that are not void. Never above `quantity`; see `billableQuantity` for what is left to bill."
     ),
+    returnedQuantity: quantity(2).optional().openapi({
+      description:
+        "Phase 3e (contract preview; always present once returns ship): how much of this line went back to the vendor on returns. Never above `quantity`.",
+    }),
+    billableQuantity: quantity(20).optional().openapi({
+      description:
+        "Phase 3e (contract preview; always present once returns ship): what is left to bill: `quantity − billedQuantity −` the returned quantity that had not been billed. A return takes unbilled goods first, so it lowers this before it credits any bill.",
+    }),
     note: z.string().nullable().openapi({ example: "Batch 2026-10-B" }),
   })
   .openapi("GoodsReceiptLine");
@@ -1236,7 +1244,12 @@ const billCore = {
   vatAdjustment: signedMoney("-0.002", "The rounding correction entered to match the invoice; \"0.000\" when none."),
   total: money("43.558", "subtotal + tax: what is owed for this bill."),
   paid: money("20.000", "Sum of the allocations of payments that are not void."),
-  balanceDue: money("23.558", "total − paid. \"0.000\" once paid, and for a void bill."),
+  balanceDue: money("23.558", "total − paid − credited. \"0.000\" once paid, and for a void bill."),
+  credited: money("0.000").optional().openapi({
+    description:
+      "Phase 3e (contract preview; always present once debit notes ship): debit note credit applied to this bill (its own notes and spare credit applied from others), VAT included, notes that are not void only. Counts toward `paid` status like a payment.",
+    example: "0.000",
+  }),
   costVariance: signedMoney(
     "1.200",
     "Sum of the goods lines' `costVariance`: how much more (or, negative, less) the bill costs than the receipts put into stock. Stock is not revalued; kept for purchase-price-variance reporting."
@@ -1300,6 +1313,14 @@ export const BillLineSchema = z
       "1.200",
       "Goods lines: what this line costs the business minus what the receipt put into stock for the same quantity. With a TRN: subtotal − quantity × receipt `unitCost`. Without a TRN (VAT is part of the cost): total − quantity × receipt `stockUnitCost`. \"0.000\" on a service line."
     ),
+    returnedQuantity: quantity(1).optional().openapi({
+      description: "Phase 3e (contract preview): how much of this line's quantity returns credited. Never above `quantity`.",
+    }),
+    credited: money("1.650").optional().openapi({
+      description:
+        "Phase 3e (contract preview): VAT-exclusive amount credited on this line by debit notes that are not void (returns at `unitCost`, and price adjustments). Never above `subtotal`.",
+      example: "1.650",
+    }),
     note: z.string().nullable().openapi({ example: "Price increase from 1 Nov" }),
   })
   .openapi("BillLine");
@@ -1324,6 +1345,26 @@ export const BillSchema = z
     notes: z.string().nullable().openapi({ example: "October statement, two deliveries." }),
     lines: z.array(BillLineSchema),
     payments: z.array(BillPaymentRefSchema).openapi({ description: "Every payment allocated to this bill, oldest first, void ones included." }),
+    debitNotes: z
+      .array(
+        z
+          .object({
+            id: objectId("665f1c2e8a4b3c0012ab4100"),
+            number: z.string().openapi({ example: "DN-00003" }),
+            type: z.string().openapi({ description: "`return` or `price_adjustment` (open-ended).", example: "return" }),
+            amount: money("1.815", "The credit this note gave this bill, VAT included."),
+            status: z.string().openapi({
+              description: "The note's: `open`, `applied` or `void`. Void notes do not count toward `credited`.",
+              example: "open",
+            }),
+          })
+          .openapi("BillDebitNoteRef")
+      )
+      .optional()
+      .openapi({
+        description:
+          "Phase 3e (contract preview; always present once debit notes ship): every debit note that credited this bill, oldest first, void ones included: notes against it and notes whose spare credit was applied to it.",
+      }),
     voided: statusEventOf("null unless voided."),
     voidReason: z.string().nullable().openapi({ example: null as unknown as string }),
   })
@@ -1413,3 +1454,254 @@ export const VendorPaymentListDataSchema = z
     pagination: PaginationSchema,
   })
   .openapi("VendorPaymentListData");
+
+// ---------- Vendor returns and debit notes (Phase 3e) ----------
+
+const VendorReturnVendorSchema = PurchaseOrderVendorSchema.openapi("VendorReturnVendor", {
+  description: "A copy of the vendor's details taken when the return was posted; only `isActive` stays live.",
+});
+
+const DebitNoteRefSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab4100"),
+    number: z.string().openapi({ example: "DN-00003" }),
+    bill: z
+      .object({
+        id: objectId("665f1c2e8a4b3c0012ab3e00"),
+        number: z.string().openapi({ example: "BILL-00004" }),
+      })
+      .openapi("DebitNoteBillRef"),
+    total: money("1.815", "The note's total credit, VAT included."),
+  })
+  .openapi("DebitNoteRef");
+
+const vendorReturnCore = {
+  id: objectId("665f1c2e8a4b3c0012ab4000"),
+  number: z.string().openapi({
+    description: "Per organization, given when the return is posted: RTN-00001, RTN-00002… (more digits after RTN-99999).",
+    example: "RTN-00003",
+  }),
+  store: StockStoreRefSchema,
+  vendor: VendorReturnVendorSchema,
+  returnDate: z.string().openapi({ description: "YYYY-MM-DD: when the goods left (store timezone).", example: "2026-11-18" }),
+  reason: z.string().openapi({
+    description: "`damaged`, `expired`, `wrong_item`, `excess` or `other`. Read it as an open-ended string.",
+    example: "damaged",
+  }),
+  vendorReference: z.string().nullable().openapi({ example: "RMA-2026-118" }),
+  stockValue: money("3.200").nullable().openapi({
+    description:
+      "Sum of the lines' `stockValue`: what the returned goods were worth in stock (at average cost). Not the credit: see `credit`. null without `inventory:read` for this store, as for other stock costs.",
+    example: "3.200",
+  }),
+  credit: money("1.815", "Sum of the debit notes' `total` (VAT included); \"0.000\" when nothing returned had been billed."),
+  createdBy: PurchaseOrderUserRefSchema,
+  createdAt: isoDate("2026-11-18T07:30:00.000Z"),
+};
+
+export const VendorReturnSummarySchema = z
+  .object({
+    ...vendorReturnCore,
+    lineCount: z.number().int().openapi({ example: 1 }),
+  })
+  .openapi("VendorReturnSummary");
+
+export const VendorReturnLineSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab4001"),
+    goodsReceipt: BillGoodsReceiptRefSchema,
+    goodsReceiptLineId: objectId("665f1c2e8a4b3c0012ab3d01"),
+    variant: StockVariantRefSchema,
+    product: StockProductRefSchema,
+    quantity: quantity(2, "Sent back on this line."),
+    unbilledQuantity: quantity(1, "The part of `quantity` that had not been billed yet: it only lowers the receipt line's `billableQuantity`."),
+    creditedQuantity: quantity(1, "The part that had been billed and is credited on `billLine` (`quantity − unbilledQuantity`)."),
+    billLine: z
+      .object({
+        bill: z
+          .object({
+            id: objectId("665f1c2e8a4b3c0012ab3e00"),
+            number: z.string().openapi({ example: "BILL-00004" }),
+          })
+          .openapi("VendorReturnBillRef"),
+        lineId: objectId("665f1c2e8a4b3c0012ab3e01"),
+        unitCost: money("1.650", "The bill line's VAT-exclusive price: what each credited unit is credited at."),
+      })
+      .nullable()
+      .openapi("VendorReturnBillLineRef", { description: "The bill line credited; null when `creditedQuantity` is 0." }),
+    stocked: z.boolean().openapi({
+      description: "false when the product does not track inventory: the line is recorded but stock does not change.",
+      example: true,
+    }),
+    unitCost: money("1.600").nullable().openapi({
+      description:
+        "The store's average cost per unit when the goods left (the average itself does not change). null when `stocked` is false, or without `inventory:read` for this store.",
+      example: "1.600",
+    }),
+    stockValue: money("3.200").nullable().openapi({
+      description: "quantity × unitCost, rounded; \"0.000\" when `stocked` is false; null without `inventory:read` for this store.",
+      example: "3.200",
+    }),
+    quantityAfter: quantity(40).nullable().openapi({
+      description: "The store's stock of this variant right after the return; null when `stocked` is false.",
+    }),
+    note: z.string().nullable().openapi({ example: "Seal broken on 2 bags" }),
+  })
+  .openapi("VendorReturnLine");
+
+export const VendorReturnSchema = z
+  .object({
+    ...vendorReturnCore,
+    notes: z.string().nullable().openapi({ example: "Collected by the vendor's driver." }),
+    lines: z.array(VendorReturnLineSchema),
+    debitNotes: z.array(DebitNoteRefSchema).openapi({
+      description: "The debit notes this return created, one per bill credited. Empty when nothing returned had been billed.",
+    }),
+  })
+  .openapi("VendorReturn");
+
+export const VendorReturnDataSchema = z.object({ vendorReturn: VendorReturnSchema }).openapi("VendorReturnData");
+
+export const VendorReturnListDataSchema = z
+  .object({
+    vendorReturns: z.array(VendorReturnSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("VendorReturnListData");
+
+const debitNoteCore = {
+  id: objectId("665f1c2e8a4b3c0012ab4100"),
+  number: z.string().openapi({
+    description: "Per organization, given when the note is posted: DN-00001, DN-00002… (more digits after DN-99999).",
+    example: "DN-00003",
+  }),
+  type: z.string().openapi({
+    description: "`return` (created by a vendor return) or `price_adjustment` (recorded on its own). Read it as an open-ended string.",
+    example: "return",
+  }),
+  status: z.string().openapi({
+    description: "`open` (some credit not yet applied), `applied` (all of it used) or `void`. Read it as an open-ended string.",
+    example: "applied",
+  }),
+  vendor: BillVendorSchema,
+  bill: z
+    .object({
+      id: objectId("665f1c2e8a4b3c0012ab3e00"),
+      number: z.string().openapi({ example: "BILL-00004" }),
+      vendorInvoiceNumber: z.string().openapi({ description: "The invoice this note corrects.", example: "INV-2026-4471" }),
+      billDate: z.string().openapi({ description: "YYYY-MM-DD.", example: "2026-11-13" }),
+    })
+    .openapi("DebitNoteOriginalBill"),
+  vendorReturn: z
+    .object({
+      id: objectId("665f1c2e8a4b3c0012ab4000"),
+      number: z.string().openapi({ example: "RTN-00003" }),
+      store: StockStoreRefSchema,
+    })
+    .nullable()
+    .openapi("DebitNoteReturnRef", { description: "The return that created it; null for a price adjustment." }),
+  debitNoteDate: z.string().openapi({
+    description: "YYYY-MM-DD (organization timezone). A return's note takes the `returnDate`.",
+    example: "2026-11-18",
+  }),
+  vendorReference: z.string().nullable().openapi({ description: "The vendor's credit note number.", example: "CN-2026-031" }),
+  reason: z.string().openapi({
+    description: "Why the vendor is debited. A return's note names the return and its reason, e.g. `Goods returned on RTN-00003 (damaged)`.",
+    example: "Goods returned on RTN-00003 (damaged)",
+  }),
+  subtotal: money("1.650", "Sum of the lines' `subtotal`, VAT-exclusive."),
+  tax: money("0.165", "Sum of the lines' `tax`: VAT reversed at the bill lines' rates."),
+  total: money("1.815", "subtotal + tax: the credit."),
+  applied: money("1.815", "Credit used so far (its own bill first, then other bills): the sum of `applications` on a note that is not void."),
+  unapplied: money("0.000", "total − applied: vendor credit still to use. \"0.000\" for a void note."),
+  version: z.number().int().openapi({
+    description: "Goes up by one on every change (each application, and a void). Send it back when applying or voiding.",
+    example: 1,
+  }),
+  createdBy: PurchaseOrderUserRefSchema,
+  createdAt: isoDate("2026-11-18T07:30:00.000Z"),
+  updatedAt: isoDate("2026-11-18T07:30:00.000Z"),
+};
+
+export const DebitNoteSummarySchema = z
+  .object({
+    ...debitNoteCore,
+    lineCount: z.number().int().openapi({ example: 1 }),
+  })
+  .openapi("DebitNoteSummary");
+
+export const DebitNoteLineSchema = z
+  .object({
+    id: objectId("665f1c2e8a4b3c0012ab4101"),
+    billLineId: objectId("665f1c2e8a4b3c0012ab3e01", "The bill line credited."),
+    variant: StockVariantRefSchema,
+    product: StockProductRefSchema,
+    quantity: quantity(1).nullable().openapi({ description: "Return notes: the quantity credited. null for a price adjustment." }),
+    unitCost: money("1.650").nullable().openapi({
+      description: "Return notes: the bill line's VAT-exclusive price. null for a price adjustment.",
+      example: "1.650",
+    }),
+    subtotal: money("1.650", "VAT-exclusive credit: quantity × unitCost (returns, capped at what is still uncredited on the bill line), or the amount entered (price adjustments)."),
+    tax: z
+      .object({
+        taxRate: z
+          .object({
+            id: objectId("665f1c2e8a4b3c0012ab3600"),
+            name: z.string().openapi({ example: "VAT 10%" }),
+            rate: z.number().openapi({ description: "Percent.", example: 10 }),
+          })
+          .nullable()
+          .openapi({ description: "The bill line's rate; null when the bill line carries no VAT." }),
+        tax: money("0.165", "subtotal × rate, rounded; \"0.000\" without a rate."),
+      })
+      .openapi("DebitNoteLineTax"),
+    total: money("1.815", "subtotal + tax."),
+    note: z.string().nullable().openapi({ example: "Seal broken on 2 bags" }),
+  })
+  .openapi("DebitNoteLine");
+
+export const DebitNoteApplicationSchema = z
+  .object({
+    bill: z
+      .object({
+        id: objectId("665f1c2e8a4b3c0012ab3e00"),
+        number: z.string().openapi({ example: "BILL-00004" }),
+        vendorInvoiceNumber: z.string().openapi({ example: "INV-2026-4471" }),
+      })
+      .openapi("DebitNoteApplicationBillRef"),
+    amount: money("1.815", "Credit used on this bill, VAT included."),
+    appliedAt: isoDate("2026-11-18T07:30:00.000Z"),
+    appliedBy: PurchaseOrderUserRefSchema,
+  })
+  .openapi("DebitNoteApplication");
+
+export const DebitNoteSchema = z
+  .object({
+    ...debitNoteCore,
+    notes: z.string().nullable().openapi({ example: null as unknown as string }),
+    lines: z.array(DebitNoteLineSchema),
+    applications: z.array(DebitNoteApplicationSchema).openapi({
+      description:
+        "Where the credit went, oldest first: its own bill (when it still had a balance) and any bill the spare credit was applied to later. Kept on a void note for the record.",
+    }),
+    voided: statusEventOf("null unless voided."),
+    voidReason: z.string().nullable().openapi({ example: null as unknown as string }),
+  })
+  .openapi("DebitNote");
+
+export const DebitNoteDataSchema = z
+  .object({
+    debitNote: DebitNoteSchema,
+    bills: z.array(BillSummarySchema).openapi({
+      description:
+        "On create, apply and void only: the bills it touched, after the change (new `status`, `credited`, `balanceDue`, `version`), so the screen can refresh without more calls. Empty on GET.",
+    }),
+  })
+  .openapi("DebitNoteData");
+
+export const DebitNoteListDataSchema = z
+  .object({
+    debitNotes: z.array(DebitNoteSummarySchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("DebitNoteListData");
