@@ -56,7 +56,7 @@ export const REASON_RULES: Record<AdjustmentReason, { direction: "remove" | "add
  * adjustments; `purchase` from goods receipts, Phase 3c). Later phases will add
  * `purchase_return`, `sale` and `sale_return`; clients must tolerate types they do not know.
  */
-export const MOVEMENT_TYPES = ["opening", "adjustment", "transfer_out", "transfer_in", "purchase"] as const;
+export const MOVEMENT_TYPES = ["opening", "adjustment", "transfer_out", "transfer_in", "purchase", "vendor_return"] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
 const MAX_LINES = 200;

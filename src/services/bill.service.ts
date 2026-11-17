@@ -17,9 +17,10 @@
  */
 
 import mongoose from "mongoose";
-import { Bill, BillDocument, IBillLine } from "../models/bill.model";
+import { Bill, BillDocument, IBillLine, billDueMinor } from "../models/bill.model";
 import { VendorPayment } from "../models/vendorPayment.model";
-import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine } from "../models/goodsReceipt.model";
+import { DebitNote } from "../models/debitNote.model";
+import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine, billableMilli } from "../models/goodsReceipt.model";
 import { PurchaseOrder, IPurchaseOrderLineTax } from "../models/purchaseOrder.model";
 import { DocumentCounter } from "../models/documentCounter.model";
 import { Vendor, VendorDocument } from "../models/vendor.model";
@@ -81,10 +82,13 @@ export function addDays(date: string, days: number): string {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
-/** The status a bill has once `paidMinor` of its `totalMinor` is paid. */
-export function statusForPaid(totalMinor: number, paidMinor: number): BillStatus {
-  if (paidMinor >= totalMinor) return "paid";
-  return paidMinor > 0 ? "partially_paid" : "unpaid";
+/**
+ * The status a bill has once `settledMinor` of its `totalMinor` is settled: payments plus debit
+ * note credit (Phase 3e), which count alike.
+ */
+export function statusForPaid(totalMinor: number, settledMinor: number): BillStatus {
+  if (settledMinor >= totalMinor) return "paid";
+  return settledMinor > 0 ? "partially_paid" : "unpaid";
 }
 
 export function validationError(field: string, message: string): ApiError {
@@ -228,7 +232,8 @@ function billCoreView(ctx: BillViewContext, bill: BillDocument) {
     vatAdjustment: money(bill.vatAdjustmentMinor),
     total: money(bill.totalMinor),
     paid: money(bill.paidMinor),
-    balanceDue: money(bill.status === "void" ? 0 : Math.max(0, bill.totalMinor - bill.paidMinor)),
+    balanceDue: money(bill.status === "void" ? 0 : Math.max(0, billDueMinor(bill))),
+    credited: money(bill.creditedMinor ?? 0),
     costVariance: money(bill.costVarianceMinor),
     version: bill.version,
     createdBy: userRef(ctx, bill.createdBy),
@@ -265,12 +270,17 @@ function billLineView(ctx: BillViewContext, line: IBillLine) {
     },
     total: money(line.totalMinor),
     costVariance: money(line.costVarianceMinor),
+    returnedQuantity: fromMilli(line.returnedQuantityMilli ?? 0),
+    credited: money(line.creditedMinor ?? 0),
     note: line.note ?? null,
   };
 }
 
 async function billDetailView(organizationId: string, ctx: BillViewContext, bill: BillDocument) {
-  const payments = await VendorPayment.find({ organizationId, "allocations.billId": bill._id }).sort({ sequence: 1 });
+  const [payments, debitNotes] = await Promise.all([
+    VendorPayment.find({ organizationId, "allocations.billId": bill._id }).sort({ sequence: 1 }),
+    DebitNote.find({ organizationId, $or: [{ billId: bill._id }, { "applications.billId": bill._id }] }).sort({ sequence: 1 }),
+  ]);
   const money = (minor: number) => formatMoney(minor, ctx.decimals);
   return {
     ...billCoreView(ctx, bill),
@@ -285,6 +295,15 @@ async function billDetailView(organizationId: string, ctx: BillViewContext, bill
         payment.allocations.find((allocation) => allocation.billId.equals(bill._id))?.amountMinor ?? 0
       ),
       status: payment.status,
+    })),
+    debitNotes: debitNotes.map((note) => ({
+      id: note._id,
+      number: note.number,
+      type: note.type,
+      amount: money(
+        note.applications.filter((application) => application.billId.equals(bill._id)).reduce((sum, a) => sum + a.amountMinor, 0)
+      ),
+      status: note.status,
     })),
     voided: bill.voided ? { at: bill.voided.at, by: userRef(ctx, bill.voided.by) } : null,
     voidReason: bill.voidReason ?? null,
@@ -570,7 +589,7 @@ async function planLines(
     }
 
     // A goods line's quantity defaults to what is left to bill (checked against what was received later).
-    const remainingMilli = goods ? goods.receiptLine.quantityMilli - (goods.receiptLine.billedQuantityMilli ?? 0) : 0;
+    const remainingMilli = goods ? billableMilli(goods.receiptLine) : 0;
     const quantityMilli = line.quantity !== undefined ? toMilli(line.quantity) : remainingMilli;
     // Exactly what is left is always accepted, even if the unit has since become whole-number only.
     if (line.quantity !== undefined && !(goods && quantityMilli === remainingMilli) && !unitAllowsDecimal(entry.product.unit) && quantityMilli % 1000 !== 0) {
@@ -602,7 +621,8 @@ function assertWithinReceived(planned: PlannedLine[]) {
     if (!line.receiptLine) continue;
     const received = line.receiptLine.quantityMilli;
     const billed = line.receiptLine.billedQuantityMilli ?? 0;
-    const remaining = Math.max(0, received - billed);
+    // Goods returned before being billed can no longer be billed (Phase 3e).
+    const remaining = Math.max(0, billableMilli(line.receiptLine));
     if (line.quantityMilli <= 0 || line.quantityMilli > remaining) {
       const name = variantDisplayName(line.product, line.variant.attributeValues);
       exceeded.push({
@@ -651,6 +671,9 @@ function priceLine(line: PlannedLine, vendor: VendorDocument, settings: BillSett
     taxMinor,
     totalMinor,
     costVarianceMinor,
+    returnedQuantityMilli: 0,
+    creditedMinor: 0,
+    creditedTaxMinor: 0,
     note: line.note,
   };
 }
@@ -745,7 +768,8 @@ export async function createBill(organizationId: string, input: CreateBillInput,
       line.receipt!.storeId,
       line.receiptLine._id,
       lines[i].quantityMilli,
-      line.receiptLine.quantityMilli,
+      // The ceiling for billed: what was received less what went back unbilled.
+      line.receiptLine.quantityMilli - (line.receiptLine.returnedUnbilledMilli ?? 0),
       session
     );
     // The read and this write share the transaction's snapshot, so a concurrent bill normally
@@ -793,6 +817,7 @@ export async function createBill(organizationId: string, input: CreateBillInput,
           vatAdjustmentMinor,
           totalMinor,
           paidMinor: 0,
+          creditedMinor: 0,
           costVarianceMinor: sumMoney(lines.map((line) => line.costVarianceMinor)),
           version: 1,
           createdBy: actor,
@@ -856,6 +881,22 @@ export async function voidBill(
     const numbers = payments.map((payment) => payment.number);
     throw ApiError.coded(409, "BILL_HAS_PAYMENTS", `This bill has payments (${numbers.join(", ")}). Void them first.`, [
       { code: "BILL_HAS_PAYMENTS", meta: { payments: numbers } },
+    ]);
+  }
+  // A debit note credited it (its own note, or spare credit applied to it): a return's credit is
+  // final, and a price adjustment must be voided first.
+  const credits = await DebitNote.find({
+    organizationId: orgId,
+    status: { $ne: "void" },
+    $or: [{ billId: bill._id }, { "applications.billId": bill._id }],
+  })
+    .sort({ sequence: 1 })
+    .select("number")
+    .session(session);
+  if (credits.length > 0) {
+    const numbers = credits.map((note) => note.number);
+    throw ApiError.coded(409, "BILL_HAS_CREDITS", `This bill has debit notes (${numbers.join(", ")}), so it cannot be voided.`, [
+      { code: "BILL_HAS_CREDITS", meta: { debitNotes: numbers } },
     ]);
   }
 

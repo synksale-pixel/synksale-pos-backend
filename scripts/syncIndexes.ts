@@ -43,6 +43,8 @@ import { DocumentCounter } from "../src/models/documentCounter.model";
 import { GoodsReceipt } from "../src/models/goodsReceipt.model";
 import { Bill } from "../src/models/bill.model";
 import { VendorPayment } from "../src/models/vendorPayment.model";
+import { VendorReturn } from "../src/models/vendorReturn.model";
+import { DebitNote } from "../src/models/debitNote.model";
 
 const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
   Organization,
@@ -65,6 +67,8 @@ const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslin
   GoodsReceipt,
   Bill,
   VendorPayment,
+  VendorReturn,
+  DebitNote,
 ];
 
 async function run() {

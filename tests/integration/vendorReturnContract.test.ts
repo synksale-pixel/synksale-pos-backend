@@ -1,7 +1,7 @@
 /**
  * Purpose: Phase 3e vendor return and debit note wiring that the validator unit tests cannot see:
- * the purchase:return role seeding and sync, its scope rules, the contract-preview routes (404
- * until implemented) and the Swagger document.
+ * the purchase:return role seeding and sync, its scope rules, that the routes are mounted
+ * and the Swagger document.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -92,8 +92,8 @@ describe("purchase:return role seeding", () => {
   });
 });
 
-describe("contract preview routes", () => {
-  it("answer the router's 404 until implemented", async () => {
+describe("return and debit note routes are live", () => {
+  it("no documented route returns the router's 404 (only the documented not-found codes)", async () => {
     const key = "6c8e4f0e-2a7b-4d3c-9f51-0b2d7a1e9c44";
     const calls = [
       request.get("/api/v1/vendor-returns"),
@@ -108,8 +108,13 @@ describe("contract preview routes", () => {
     ];
     for (const call of calls) {
       const res = await call.set(auth(admin));
-      expect(res.status).toBe(404);
-      expect(res.body.code).toBeUndefined();
+      // The examples name ids that do not exist here: a coded answer (or the store's), never the router's.
+      if (res.status === 404) {
+        const known = /^(VENDOR_RETURN|DEBIT_NOTE|BILL|GOODS_RECEIPT)_NOT_FOUND$/.test(res.body.code ?? "") || res.body.message === "Store not found.";
+        expect(known, JSON.stringify(res.body)).toBe(true);
+      } else {
+        expect([200, 400, 403, 409]).toContain(res.status);
+      }
     }
   });
 });
@@ -163,7 +168,7 @@ describe("OpenAPI document", () => {
     expect(tags).toEqual(expect.arrayContaining(["Vendor Returns", "Debit Notes"]));
   });
 
-  it("documents the new receipt and bill fields as optional while in preview", async () => {
+  it("documents the new receipt and bill fields as always present", async () => {
     const res = await request.get("/api-docs.json");
     const { GoodsReceiptLine, Bill, BillSummary, BillLine } = res.body.components.schemas;
     expect(GoodsReceiptLine.properties).toHaveProperty("returnedQuantity");
@@ -176,8 +181,12 @@ describe("OpenAPI document", () => {
       [GoodsReceiptLine, "returnedQuantity"],
       [Bill, "credited"],
       [BillLine, "returnedQuantity"],
+      [GoodsReceiptLine, "billableQuantity"],
+      [BillSummary, "credited"],
+      [Bill, "debitNotes"],
+      [BillLine, "credited"],
     ] as const) {
-      expect(schema.required ?? []).not.toContain(field);
+      expect(schema.required ?? [], field).toContain(field);
     }
   });
 });

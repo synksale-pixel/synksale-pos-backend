@@ -2,8 +2,12 @@
  * Purpose: GoodsReceipt model definition.
  * Goods that arrived at one store, against a purchase order or without one. The only purchase
  * document that adds stock. Final once posted: never updated or deleted (a mistake is fixed with
- * a stock adjustment, or a return to vendor in Phase 3e). The one exception is each line's
- * `billedQuantityMilli`, which vendor bills (Phase 3d) raise and lower with a conditional `$inc`.
+ * a stock adjustment, or a return to vendor). The exceptions are each line's counters, changed
+ * only with `$inc`: `billedQuantityMilli` (vendor bills, Phase 3d) and `returnedQuantityMilli` /
+ * `returnedUnbilledMilli` (vendor returns, Phase 3e).
+ *
+ * What is left to bill = quantity − billed − returnedUnbilled: a return takes unbilled goods
+ * first, and only those stop being billable (returned goods that were billed are credited).
  *
  * - `number` (GRN-00001) is taken from the organization's counter inside the posting transaction.
  * - `vendorSnapshot` is the vendor's details at posting (the PO's issue copy against a PO).
@@ -34,8 +38,16 @@ export interface IGoodsReceiptLine {
   quantityAfterMilli: number | null;
   /** How much of this line is on vendor bills that are not void; never above quantityMilli. */
   billedQuantityMilli: number;
+  /** How much of this line went back to the vendor; never above quantityMilli. */
+  returnedQuantityMilli: number;
+  /** The part of returnedQuantityMilli that had not been billed (never credited on a bill). */
+  returnedUnbilledMilli: number;
   note: string | null;
 }
+
+/** What is still left to bill on a receipt line (lines posted before 3d/3e lack the counters). */
+export const billableMilli = (line: IGoodsReceiptLine): number =>
+  line.quantityMilli - (line.billedQuantityMilli ?? 0) - (line.returnedUnbilledMilli ?? 0);
 
 export interface IGoodsReceipt {
   organizationId: mongoose.Types.ObjectId;
@@ -76,6 +88,8 @@ const lineSchema = new Schema<IGoodsReceiptLine>({
   stocked: { type: Boolean, required: true },
   quantityAfterMilli: { type: Number, default: null },
   billedQuantityMilli: { type: Number, default: 0, min: 0, validate: integer },
+  returnedQuantityMilli: { type: Number, default: 0, min: 0, validate: integer },
+  returnedUnbilledMilli: { type: Number, default: 0, min: 0, validate: integer },
   note: { type: String, default: null },
 });
 
@@ -134,10 +148,10 @@ for (const method of IMMUTABLE) {
   });
 }
 
-/** `lines.$.billedQuantityMilli` or `lines.$[x].billedQuantityMilli`. */
-const BILLED_PATH = /^lines\.\$(\[[A-Za-z0-9]*\])?\.billedQuantityMilli$/;
+/** `lines.$.<counter>` or `lines.$[x].<counter>` for the billed and returned counters. */
+const COUNTER_PATH = /^lines\.\$(\[[A-Za-z0-9]*\])?\.(billedQuantityMilli|returnedQuantityMilli|returnedUnbilledMilli)$/;
 
-/** The only update a receipt accepts: `$inc` of lines' billed quantities (vendor bills). */
+/** The only update a receipt accepts: `$inc` of lines' billed and returned quantities. */
 export function isBilledQuantityUpdate(update: unknown): boolean {
   if (!update || typeof update !== "object" || Array.isArray(update)) return false;
   const inc = (update as Record<string, unknown>).$inc;
@@ -147,13 +161,13 @@ export function isBilledQuantityUpdate(update: unknown): boolean {
     // Mongoose adds $setOnInsert of createdAt (timestamps) to every update; it never applies without an upsert.
     Object.keys(update).every((op) => op === "$inc" || op === "$setOnInsert") &&
     fields.length > 0 &&
-    fields.every((field) => BILLED_PATH.test(field))
+    fields.every((field) => COUNTER_PATH.test(field))
   );
 }
 
 goodsReceiptSchema.pre("updateOne", function () {
   if (!isBilledQuantityUpdate(this.getUpdate())) {
-    throw new Error("Goods receipts are final; updateOne may only change lines' billed quantities.");
+    throw new Error("Goods receipts are final; updateOne may only change lines' billed and returned quantities.");
   }
 });
 

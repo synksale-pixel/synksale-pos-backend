@@ -15,7 +15,7 @@ import { MOVEMENT_TYPES, MovementType } from "../validators/stock.validator";
 export { MOVEMENT_TYPES };
 export type { MovementType };
 
-export const MOVEMENT_SOURCE_TYPES = ["product", "adjustment", "transfer", "goods_receipt"] as const;
+export const MOVEMENT_SOURCE_TYPES = ["product", "adjustment", "transfer", "goods_receipt", "vendor_return"] as const;
 export type MovementSourceType = (typeof MOVEMENT_SOURCE_TYPES)[number];
 
 export interface IMovementSource {

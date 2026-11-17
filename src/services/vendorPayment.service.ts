@@ -13,7 +13,7 @@
  */
 
 import mongoose from "mongoose";
-import { Bill, BillDocument } from "../models/bill.model";
+import { Bill, BillDocument, billDueMinor } from "../models/bill.model";
 import { VendorPayment, VendorPaymentDocument } from "../models/vendorPayment.model";
 import { DocumentCounter } from "../models/documentCounter.model";
 import { Vendor, VendorDocument } from "../models/vendor.model";
@@ -270,7 +270,7 @@ export async function createVendorPayment(
 
   const exceeded: ApiErrorDetail[] = [];
   targets.forEach((bill, i) => {
-    const dueMinor = bill.totalMinor - bill.paidMinor;
+    const dueMinor = billDueMinor(bill);
     if (amounts[i] > dueMinor) {
       const balanceDue = formatMoney(dueMinor, settings.decimals);
       exceeded.push({
@@ -288,7 +288,7 @@ export async function createVendorPayment(
     const paidMinor = bill.paidMinor + amounts[i];
     const updated = await Bill.findOneAndUpdate(
       { _id: bill._id, organizationId: orgId, version: bill.version, status: { $in: PAYABLE_BILL_STATUSES } },
-      { $set: { status: statusForPaid(bill.totalMinor, paidMinor) }, $inc: { paidMinor: amounts[i], version: 1 } },
+      { $set: { status: statusForPaid(bill.totalMinor, paidMinor + (bill.creditedMinor ?? 0)) }, $inc: { paidMinor: amounts[i], version: 1 } },
       { new: true, session }
     );
     // Reads and writes share the transaction's snapshot: a concurrent payment normally aborts with
@@ -376,7 +376,7 @@ export async function voidVendorPayment(
     const paidMinor = bill.paidMinor - allocation.amountMinor;
     const updated = await Bill.findOneAndUpdate(
       { _id: bill._id, organizationId: orgId, version: bill.version },
-      { $set: { status: statusForPaid(bill.totalMinor, paidMinor) }, $inc: { paidMinor: -allocation.amountMinor, version: 1 } },
+      { $set: { status: statusForPaid(bill.totalMinor, paidMinor + (bill.creditedMinor ?? 0)) }, $inc: { paidMinor: -allocation.amountMinor, version: 1 } },
       { new: true, session }
     );
     if (!updated) throw billChanged("paymentId");

@@ -20,6 +20,7 @@ import vendorRouter from "./vendor.routes";
 import { storePurchaseOrderRouter, purchaseOrderRouter } from "./purchaseOrder.routes";
 import { storeGoodsReceiptRouter, goodsReceiptRouter } from "./goodsReceipt.routes";
 import { billRouter, vendorPaymentRouter } from "./bill.routes";
+import { storeVendorReturnRouter, vendorReturnRouter, debitNoteRouter } from "./vendorReturn.routes";
 
 const v1Router = Router();
 
@@ -44,9 +45,10 @@ v1Router.use("/auth", tenantAuthRouter);
 v1Router.use("/users", userRouter);
 v1Router.use("/roles", roleRouter);
 v1Router.use("/stores", storeRouter);
-// Before the stock router: its scopeToStore refuses deactivated stores, which PO and receipt reads allow.
+// Before the stock router: its scopeToStore refuses deactivated stores, which PO, receipt and return reads allow.
 v1Router.use("/stores/:storeId/purchase-orders", storePurchaseOrderRouter);
 v1Router.use("/stores/:storeId/goods-receipts", storeGoodsReceiptRouter);
+v1Router.use("/stores/:storeId/vendor-returns", storeVendorReturnRouter);
 v1Router.use("/stores/:storeId", storeStockRouter);
 v1Router.use("/organization", organizationRouter);
 v1Router.use("/tax-rates", taxRateRouter);
@@ -58,5 +60,7 @@ v1Router.use("/purchase-orders", purchaseOrderRouter);
 v1Router.use("/goods-receipts", goodsReceiptRouter);
 v1Router.use("/bills", billRouter);
 v1Router.use("/vendor-payments", vendorPaymentRouter);
+v1Router.use("/vendor-returns", vendorReturnRouter);
+v1Router.use("/debit-notes", debitNoteRouter);
 
 export default v1Router;

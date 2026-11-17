@@ -1,6 +1,5 @@
 /**
- * Purpose: Swagger for Phase 3e vendor returns and debit notes (contract preview: documented
- * before the routes exist, so they answer 404 until the implementation ships).
+ * Purpose: Swagger for Phase 3e vendor returns and debit notes.
  */
 import { registry, z } from "../config/openapi.registry";
 import {
@@ -32,9 +31,6 @@ const returnStoreBase = `${API}/stores/{storeId}/vendor-returns`;
 const returnPath = `${returnStoreBase}/{vendorReturnId}`;
 const debitNoteBase = `${API}/debit-notes`;
 const debitNotePath = `${debitNoteBase}/{debitNoteId}`;
-
-const PREVIEW =
-  "**Contract preview (Phase 3e):** documented for frontend sign-off; the route answers 404 until the implementation ships.";
 
 const storeIdParam = z.object({
   storeId: z.string().openapi({ description: "Store ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3400" }),
@@ -209,7 +205,7 @@ registry.registerPath({
   path: returnOrgBase,
   tags: returnTags,
   summary: "List vendor returns (all stores)",
-  description: [PREVIEW, "", returnListNote, "", "Paginated, newest return number first. A receipt's return history: `goodsReceiptId=…`.", "", LIST_RULES].join("\n"),
+  description: [returnListNote, "", "Paginated, newest return number first. A receipt's return history: `goodsReceiptId=…`.", "", LIST_RULES].join("\n"),
   security,
   request: { query: listVendorReturnsQuerySchema },
   responses: {
@@ -228,7 +224,7 @@ registry.registerPath({
   path: returnStoreBase,
   tags: returnTags,
   summary: "List a store's vendor returns",
-  description: [PREVIEW, "", returnReadNote, "", "The same list for this store only (a `storeId` query filter is ignored here).", "", LIST_RULES].join("\n"),
+  description: [returnReadNote, "", "The same list for this store only (a `storeId` query filter is ignored here).", "", LIST_RULES].join("\n"),
   security,
   request: { params: storeIdParam, query: listVendorReturnsQuerySchema },
   responses: {
@@ -248,7 +244,7 @@ registry.registerPath({
   path: returnPath,
   tags: returnTags,
   summary: "Get a vendor return",
-  description: [PREVIEW, "", returnReadNote, "", "With its lines and the debit notes it created."].join("\n"),
+  description: [returnReadNote, "", "With its lines and the debit notes it created."].join("\n"),
   security,
   request: { params: returnParams },
   responses: {
@@ -276,8 +272,7 @@ registry.registerPath({
   tags: returnTags,
   summary: "Return goods to a vendor",
   description: [
-    PREVIEW,
-    "",
+
     returnCreateNote,
     "",
     "Sends received goods back to the vendor from this store. `vendorId` and `reason` (`damaged`, `expired`, `wrong_item`, `excess` or `other`) are required. A deactivated vendor is fine; a deactivated store is not.",
@@ -370,8 +365,7 @@ registry.registerPath({
   tags: debitNoteTags,
   summary: "List debit notes",
   description: [
-    PREVIEW,
-    "",
+
     debitNoteReadNote,
     "",
     "Paginated, newest number first. A vendor's credit still to use: `vendorId=…&status=open` (sum their `unapplied`).",
@@ -396,7 +390,7 @@ registry.registerPath({
   path: debitNotePath,
   tags: debitNoteTags,
   summary: "Get a debit note",
-  description: [PREVIEW, "", debitNoteReadNote, "", "With its lines and applications. `bills` in `data` is always empty here."].join("\n"),
+  description: [debitNoteReadNote, "", "With its lines and applications. `bills` in `data` is always empty here."].join("\n"),
   security,
   request: { params: debitNoteIdParam },
   responses: {
@@ -415,8 +409,7 @@ registry.registerPath({
   tags: debitNoteTags,
   summary: "Record a price adjustment debit note",
   description: [
-    PREVIEW,
-    "",
+
     debitNoteWriteNote,
     "",
     "Records that the vendor over-charged on a bill (`type: price_adjustment`). Returned goods do not go here: a vendor return creates its own debit note.",
@@ -480,8 +473,7 @@ registry.registerPath({
   tags: debitNoteTags,
   summary: "Apply a debit note's credit to other bills",
   description: [
-    PREVIEW,
-    "",
+
     debitNoteWriteNote,
     "",
     "Uses a note's `unapplied` credit (left over because its own bill was already paid) on other bills of **the same vendor**, like a payment that moves no money.",
@@ -546,8 +538,7 @@ registry.registerPath({
   tags: debitNoteTags,
   summary: "Void a price adjustment debit note",
   description: [
-    PREVIEW,
-    "",
+
     debitNoteWriteNote,
     "",
     "Cancels a price adjustment recorded by mistake. Every application is reversed in the same step: each bill's `credited` goes down and its status moves back to `partially_paid` or `unpaid`; the bill lines' `credited` goes down. The note keeps its number (status `void`, `voided`, `voidReason`).",
