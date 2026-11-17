@@ -24,6 +24,7 @@ export type PermissionKey =
   | "purchase:read"
   | "purchase:order"
   | "purchase:receive"
+  | "purchase:return"
   | "purchase:bill"
   | "purchase:pay"
   // Reports
@@ -156,10 +157,20 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     minScope: "store",
   },
   {
+    // Goods go back from one store, so returning is a store job. Kept apart from
+    // purchase:receive: taking stock out is a different risk from bringing it in. The debit
+    // notes a return creates come from the bill, so no bill permission is needed.
+    key: "purchase:return",
+    label: "Return Goods to Vendors",
+    category: "Purchases",
+    minScope: "store",
+  },
+  {
     // Vendor bills are organization-level (one invoice can cover several stores' deliveries).
     // Kept apart from purchase:pay so whoever records bills need not be able to pay them.
     key: "purchase:bill",
-    label: "Record/Void Vendor Bills",
+    // Also covers debit notes (Phase 3e): price adjustments, applying vendor credit, voiding.
+    label: "Record/Void Vendor Bills and Debit Notes",
     category: "Purchases",
     minScope: "organization",
   },

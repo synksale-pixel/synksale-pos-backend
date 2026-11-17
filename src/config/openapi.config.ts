@@ -141,6 +141,8 @@ export function generateOpenApiDocument() {
       { name: "Goods Receipts", description: "Goods that arrived at a store, against a purchase order or without one. The only purchase document that adds stock; final once posted." },
       { name: "Vendor Bills", description: "Vendor invoices: what the organization owes. Goods lines bill goods receipt lines (never more than was received); service lines need no receipt. Organization-level; posted on create, void to correct. Never change stock." },
       { name: "Vendor Payments", description: "Money paid to a vendor, split across its open bills. Partial payments allowed; no advances or overpayment in v1. Void to correct." },
+      { name: "Vendor Returns", description: "Goods sent back to a vendor from one store, against goods receipt lines. Removes stock at average cost; final once posted. Returning goods that were already billed creates a debit note." },
+      { name: "Debit Notes", description: "Credit from a vendor against one bill: created by a return of billed goods, or recorded for a price correction. Reduces the bill's balance; spare credit is applied to the vendor's other open bills. Organization-level." },
       { name: "User Invites", description: "Invite staff to an organization and accept invitations." },
       { name: "Staff Management", description: "Read the staff roster and manage an existing user's roles, store assignments and access." },
       { name: "Roles", description: "Read the organization's roles and the permission catalog (needed to resolve a roleId), and create, rename, edit the permissions of, or delete an organization's custom roles (`role:manage`, organization-scoped role required for writes)." },

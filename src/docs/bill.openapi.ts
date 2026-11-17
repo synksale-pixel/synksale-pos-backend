@@ -296,7 +296,7 @@ registry.registerPath({
 
     billWriteNote,
     "",
-    "Cancels a bill entered by mistake. Allowed only while no payment that is not void is allocated to it: void those payments first. The bill keeps its number (status `void`, `voided`, `voidReason`); the receipt lines' `billedQuantity` goes back down, and its `vendorInvoiceNumber` can be used again.",
+    "Cancels a bill entered by mistake. Allowed only while no payment that is not void is allocated to it (void those payments first), and (from Phase 3e) no debit note has credited it. The bill keeps its number (status `void`, `voided`, `voidReason`); the receipt lines' `billedQuantity` goes back down, and its `vendorInvoiceNumber` can be used again.",
     "",
     IDEMPOTENCY,
   ].join("\n"),
@@ -317,6 +317,7 @@ registry.registerPath({
         "- `BILL_VERSION_CONFLICT`: the bill changed since you loaded it (`errors[0].meta.currentVersion`).",
         "- `BILL_STATUS_CONFLICT`: the bill is already void.",
         "- `BILL_HAS_PAYMENTS`: payments are allocated to it (`errors[0].meta.payments` lists their numbers). Void them first.",
+        "- `BILL_HAS_CREDITS` (Phase 3e): a debit note that is not void credited it (`errors[0].meta.debitNotes` lists their numbers). A return's credit is final, so such a bill stays.",
       ],
       { message: "This bill has payments. Void them first.", code: "BILL_HAS_PAYMENTS", errors: [{ code: "BILL_HAS_PAYMENTS", meta: { payments: ["PAY-00002"] } }] }
     ),
@@ -375,7 +376,7 @@ registry.registerPath({
     payWriteNote,
     "",
     "Records money paid to one vendor, split across one or more of its bills.",
-    "- Each allocation names an `unpaid` or `partially_paid` bill of this vendor and pays part or all of its `balanceDue`. Partial payments are fine.",
+    "- Each allocation names an `unpaid` or `partially_paid` bill of this vendor and pays part or all of its `balanceDue` (from Phase 3e, after any debit note credit). Partial payments are fine.",
     "- `amount` must equal the sum of the allocations: no advances, overpayments or unallocated credit in v1.",
     "- A deactivated vendor can still be paid.",
     "- `method`: `cash`, `bank_transfer`, `cheque`, `card` or `other`, with an optional `reference`. Payments are not linked to bank accounts or the cash drawer in v1.",
