@@ -35,6 +35,7 @@ import { unitAllowsDecimal } from "../config/units.config";
 import { storesWithPermission } from "./permission.service";
 import { catalogRefs, storeRefs, userRefs, CatalogRefs, StoreRef, UserRef } from "./stock.service";
 import { runStockTransaction } from "./stockLedger.service";
+import { claimVariants } from "./catalogClaims.service";
 import {
   OPEN_PURCHASE_ORDER_STATUSES,
   PURCHASE_ORDER_STATUSES,
@@ -279,7 +280,9 @@ async function buildLines(
   organizationId: string,
   sources: LineSource[],
   vatTreatment: VatTreatment,
-  decimals: number
+  decimals: number,
+  /** Given when the lines are being written (create, edit): their variants are claimed. */
+  session?: mongoose.ClientSession
 ): Promise<BuiltLines> {
   const variants = await ProductVariant.find({ organizationId, _id: { $in: sources.map((line) => oid(line.variantId)) } });
   const products = await Product.find({ organizationId, _id: { $in: variants.map((variant) => variant.productId) } });
@@ -337,6 +340,17 @@ async function buildLines(
     resolved.push({ variant, product, unitCostMinor });
   });
   if (errors.length > 0) throw lineErrors(errors);
+  if (session) {
+    // Claimed in the PO's transaction, so a concurrent product/variant delete conflicts with it
+    // (catalogClaims.service); its retry then sees this PO, or this one sees the variant gone.
+    const gone = new Set((await claimVariants(organizationId, sources.map((line) => line.variantId), session)).map(String));
+    const missing = sources.flatMap((line, index): ApiErrorDetail[] =>
+      gone.has(line.variantId.toLowerCase())
+        ? [{ field: `lines[${index}].variantId`, code: "VARIANT_NOT_FOUND", message: `Variant '${line.variantId}' not found.` }]
+        : []
+    );
+    if (missing.length > 0) throw lineErrors(missing);
+  }
 
   const lines = resolved.map(({ variant, product, unitCostMinor }, index): BuiltLine => {
     const source = sources[index];
@@ -595,7 +609,12 @@ export async function getPurchaseOrder(organizationId: string, storeId: string, 
  * The numbers of open POs (draft, issued, partially received) with any of these variants, for
  * the catalog's delete checks. At most `limit`, oldest first.
  */
-export async function openPurchaseOrderNumbers(organizationId: string, variantIds: ObjectId[], limit = 5): Promise<string[]> {
+export async function openPurchaseOrderNumbers(
+  organizationId: string,
+  variantIds: ObjectId[],
+  limit = 5,
+  session?: mongoose.ClientSession
+): Promise<string[]> {
   if (variantIds.length === 0) return [];
   const pos = await PurchaseOrder.find({
     organizationId,
@@ -604,7 +623,8 @@ export async function openPurchaseOrderNumbers(organizationId: string, variantId
   })
     .select("number")
     .sort({ sequence: 1 })
-    .limit(limit);
+    .limit(limit)
+    .session(session ?? null);
   return pos.map((po) => po.number);
 }
 
@@ -628,7 +648,7 @@ export async function createPurchaseOrder(
   assertDateOrder(orderDate, input.expectedDate);
 
   const vendor = await claimVendor(organizationId, input.vendorId, session);
-  const built = await buildLines(organizationId, fromInput(input.lines), vendor.vatTreatment, decimals);
+  const built = await buildLines(organizationId, fromInput(input.lines), vendor.vatTreatment, decimals, session);
 
   const orgId = oid(organizationId);
   const counter = await DocumentCounter.findOneAndUpdate(
@@ -704,7 +724,11 @@ export async function updatePurchaseOrder(
 
     if (input.lines !== undefined || vendorChanges) {
       const sources = input.lines !== undefined ? fromInput(input.lines) : fromStored(po.lines);
-      Object.assign(set, linesUpdate(await buildLines(organizationId, sources, vatTreatment, decimals)));
+      // New lines claim their variants; stored lines (a vendor change) already reference theirs.
+      Object.assign(
+        set,
+        linesUpdate(await buildLines(organizationId, sources, vatTreatment, decimals, input.lines !== undefined ? session : undefined))
+      );
     }
     if (input.orderDate !== undefined) set.orderDate = input.orderDate;
     if (input.expectedDate !== undefined) set.expectedDate = input.expectedDate;

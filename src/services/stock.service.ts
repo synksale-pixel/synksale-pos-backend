@@ -943,9 +943,9 @@ export async function recordOpeningStock(
 }
 
 /** True when any of the variants has ever had a stock movement (in-use and unit locks). */
-export async function hasStockMovements(organizationId: string, variantIds: ObjectId[]): Promise<boolean> {
+export async function hasStockMovements(organizationId: string, variantIds: ObjectId[], session?: mongoose.ClientSession): Promise<boolean> {
   if (variantIds.length === 0) return false;
-  return Boolean(await StockMovement.exists({ organizationId, variantId: { $in: variantIds } }));
+  return Boolean(await StockMovement.exists({ organizationId, variantId: { $in: variantIds } }).session(session ?? null));
 }
 
 /** True when any store holds a non-zero quantity of any of the variants. */

@@ -30,7 +30,8 @@ import { logger } from "../config/logger.config";
 import { getCurrency } from "../config/currencies.config";
 import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
-import { assertCategoryExists, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
+import { assertCategoryExists, categoryNotFound, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
+import { claimCategory, claimTaxRate } from "./catalogClaims.service";
 import { assertVendorSelectable, vendorRefs, VendorRef } from "./vendor.service";
 import { openPurchaseOrderNumbers } from "./purchaseOrder.service";
 import { GoodsReceipt } from "../models/goodsReceipt.model";
@@ -448,6 +449,24 @@ async function auditPriceChanges(
  * into an update of a row the aborted attempt never committed. Mongoose's wrapper resets that
  * document state between attempts.
  */
+/**
+ * Claims the category and tax rate a product is being saved with, inside the save's transaction,
+ * so a concurrent delete of either conflicts with the save (see catalogClaims.service). The
+ * up-front checks give the usual errors; this catches a delete that lands in between.
+ */
+async function claimReferences(
+  organizationId: string,
+  session: mongoose.ClientSession,
+  refs: { categoryId?: mongoose.Types.ObjectId | null; taxRateId?: mongoose.Types.ObjectId | null }
+) {
+  if (refs.categoryId && !(await claimCategory(organizationId, refs.categoryId, session))) {
+    throw categoryNotFound(400);
+  }
+  if (refs.taxRateId && !(await claimTaxRate(organizationId, refs.taxRateId, session))) {
+    throw ApiError.coded(400, "TAX_RATE_NOT_FOUND", "Tax rate not found.", [{ field: "taxRateId", code: "TAX_RATE_NOT_FOUND" }]);
+  }
+}
+
 async function inTransaction(work: (session: mongoose.ClientSession) => Promise<void>) {
   try {
     await mongoose.connection.transaction(work);
@@ -843,6 +862,7 @@ export async function createProduct(organizationId: string, input: CreateProduct
   );
 
   await inTransaction(async (session) => {
+    await claimReferences(organizationId, session, { categoryId: product.categoryId, taxRateId: product.taxRateId });
     await product.save({ session });
     for (const { variant } of candidates) {
       await variant.save({ session });
@@ -1060,7 +1080,13 @@ export async function updateProduct(
     }
   }
 
+  // Only a new reference needs a claim: one the product already had is seen by a delete's check.
+  const newRefs = {
+    categoryId: product.isModified("categoryId") ? product.categoryId : null,
+    taxRateId: product.isModified("taxRateId") ? product.taxRateId : null,
+  };
   await inTransaction(async (session) => {
+    await claimReferences(organizationId, session, newRefs);
     await product.save({ session });
     if (defaultVariant) await defaultVariant.save({ session });
   });
@@ -1092,16 +1118,17 @@ export async function setProductActive(
 
 /**
  * Refuses deleting what an open purchase order (draft, issued, partially received) still lists;
- * `meta.purchaseOrders` names up to five of them. A PO saved with it while the delete runs is not
- * caught (deferred with the other catalog delete races).
+ * `meta.purchaseOrders` names up to five of them. A PO saved with it while the delete runs claims
+ * the variant and conflicts with the delete (catalogClaims.service).
  */
 async function assertNotOnOpenPurchaseOrder(
   organizationId: string,
   variantIds: mongoose.Types.ObjectId[],
   code: "PRODUCT_IN_USE" | "VARIANT_IN_USE",
-  noun: "product" | "variant"
+  noun: "product" | "variant",
+  session: mongoose.ClientSession
 ) {
-  const numbers = await openPurchaseOrderNumbers(organizationId, variantIds);
+  const numbers = await openPurchaseOrderNumbers(organizationId, variantIds, 5, session);
   if (numbers.length === 0) return;
   const list = numbers.length === 1 ? `purchase order ${numbers[0]}` : `purchase orders ${numbers.join(", ")}`;
   throw ApiError.coded(409, code, `This ${noun} is on open ${list}. Remove it from the order or deactivate it instead.`, [
@@ -1118,15 +1145,31 @@ async function assertNoPurchaseHistory(
   organizationId: string,
   variantIds: mongoose.Types.ObjectId[],
   code: "PRODUCT_IN_USE" | "VARIANT_IN_USE",
-  noun: "product" | "variant"
+  noun: "product" | "variant",
+  session: mongoose.ClientSession
 ) {
   if (variantIds.length === 0) return;
-  const received = await GoodsReceipt.exists({ organizationId, "lines.variantId": { $in: variantIds } });
-  if (received || (await variantsOnBills(organizationId, variantIds))) {
+  const received = await GoodsReceipt.exists({ organizationId, "lines.variantId": { $in: variantIds } }).session(session);
+  if (received || (await variantsOnBills(organizationId, variantIds, session))) {
     throw ApiError.coded(409, code, `This ${noun} has purchase history (goods receipts or vendor bills) and can only be deactivated.`, [
       { code, meta: { reason: "purchase_history" } },
     ]);
   }
+}
+
+/** Every in-use check of a product or variant delete, read in the delete's transaction. */
+async function assertDeletable(
+  organizationId: string,
+  variantIds: mongoose.Types.ObjectId[],
+  code: "PRODUCT_IN_USE" | "VARIANT_IN_USE",
+  noun: "product" | "variant",
+  session: mongoose.ClientSession
+) {
+  if (await hasStockMovements(organizationId, variantIds, session)) {
+    throw ApiError.coded(409, code, `This ${noun} has stock history and can only be deactivated.`);
+  }
+  await assertNoPurchaseHistory(organizationId, variantIds, code, noun, session);
+  await assertNotOnOpenPurchaseOrder(organizationId, variantIds, code, noun, session);
 }
 
 /**
@@ -1139,13 +1182,12 @@ export async function deleteProduct(organizationId: string, productId: string, a
   const variantIds = (
     await ProductVariant.find({ organizationId, productId: product._id, isDelete: { $in: [true, false] } }).select("_id")
   ).map((variant) => variant._id);
-  if (await hasStockMovements(organizationId, variantIds)) {
-    throw ApiError.coded(409, "PRODUCT_IN_USE", "This product has stock history and can only be deactivated.");
-  }
-  await assertNoPurchaseHistory(organizationId, variantIds, "PRODUCT_IN_USE", "product");
-  await assertNotOnOpenPurchaseOrder(organizationId, variantIds, "PRODUCT_IN_USE", "product");
 
+  // The checks run in the delete's transaction, which then writes every variant: a purchase
+  // document or first stock movement claiming one of them concurrently conflicts with it
+  // (catalogClaims.service), and the retry sees the other's result.
   await inTransaction(async (session) => {
+    await assertDeletable(organizationId, variantIds, "PRODUCT_IN_USE", "product", session);
     product.isDelete = true;
     await product.save({ session });
     await ProductVariant.updateMany(
@@ -1284,18 +1326,17 @@ export async function setVariantActive(
 export async function deleteVariant(organizationId: string, productId: string, variantId: string, actorUserId: string) {
   const product = await findVariantItemOrThrow(organizationId, productId);
   const variant = await findVariantOrThrow(organizationId, productId, variantId);
-  if (await hasStockMovements(organizationId, [variant._id])) {
-    throw ApiError.coded(409, "VARIANT_IN_USE", "This variant has stock history and can only be deactivated.");
-  }
-  await assertNoPurchaseHistory(organizationId, [variant._id], "VARIANT_IN_USE", "variant");
-  await assertNotOnOpenPurchaseOrder(organizationId, [variant._id], "VARIANT_IN_USE", "variant");
 
   if (variant.isActive && (await otherActiveVariants(organizationId, product, variant._id)) === 0) {
     throw lastActiveVariant();
   }
 
-  variant.isDelete = true;
-  await variant.save();
+  // As deleteProduct: checked and written in one transaction, so a concurrent claim conflicts.
+  await inTransaction(async (session) => {
+    await assertDeletable(organizationId, [variant._id], "VARIANT_IN_USE", "variant", session);
+    variant.isDelete = true;
+    await variant.save({ session });
+  });
 
   logger.info(`Variant deleted: ${variantId} product=${productId} org=${organizationId} by user=${actorUserId}`);
   return buildProductView(organizationId, product);

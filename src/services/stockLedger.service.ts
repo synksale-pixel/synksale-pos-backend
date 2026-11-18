@@ -20,6 +20,8 @@ import mongoose from "mongoose";
 import Decimal from "decimal.js";
 import { StockLevel } from "../models/stockLevel.model";
 import { StockMovement, IMovementSource, MovementType, StockMovementDocument } from "../models/stockMovement.model";
+import { ApiError } from "../utils/ApiError";
+import { claimVariants } from "./catalogClaims.service";
 
 const D = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 const MILLI = 1000;
@@ -145,7 +147,7 @@ export async function applyMovement(session: mongoose.ClientSession, input: Appl
       ? computeAddition(input.before, input.quantityMilli, input.unitCostMinor ?? 0, input.totalValueMinor)
       : computeRemoval(input.before, -input.quantityMilli);
 
-  await StockLevel.updateOne(
+  const level = await StockLevel.updateOne(
     { organizationId: input.organizationId, storeId: input.storeId, variantId: input.variantId },
     {
       $set: {
@@ -158,6 +160,13 @@ export async function applyMovement(session: mongoose.ClientSession, input: Appl
     },
     { upsert: true, session }
   );
+  // The variant's first movement in this store claims it, so a concurrent product/variant delete
+  // conflicts with it (catalogClaims.service). Later movements need no claim: the delete's
+  // stock-history check already sees the existing ones. This keeps busy variants' documents out
+  // of the hot path.
+  if (level.upsertedCount > 0 && (await claimVariants(input.organizationId, [input.variantId], session)).length > 0) {
+    throw ApiError.coded(400, "VARIANT_NOT_FOUND", "Variant not found.");
+  }
 
   const [movement] = await StockMovement.create(
     [

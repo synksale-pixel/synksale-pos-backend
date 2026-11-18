@@ -242,18 +242,28 @@ export async function deleteTaxRate(organizationId: string, taxRateId: string, a
     );
   }
 
-  const productCount = await Product.countDocuments({ organizationId, taxRateId: taxRate._id });
-  if (productCount > 0) {
-    throw ApiError.coded(
-      409,
-      "TAX_RATE_IN_USE",
-      `This tax rate is used by ${productCount} product${productCount === 1 ? "" : "s"}. Deactivate it instead, or move those products to another rate first.`,
-      [{ code: "TAX_RATE_IN_USE", meta: { productCount } }]
-    );
-  }
-
-  taxRate.isDelete = true;
-  await taxRate.save();
+  // Checked and written in one transaction: a product saved with this rate concurrently claims it
+  // (catalogClaims.service), so one of the two conflicts and its retry sees the other.
+  await mongoose.connection.transaction(async (session) => {
+    const current = await TaxRate.findOne({ _id: taxRate._id, organizationId }).session(session);
+    if (!current) {
+      throw ApiError.coded(404, "TAX_RATE_NOT_FOUND", "Tax rate not found.");
+    }
+    if (current.isDefault) {
+      throw ApiError.coded(409, "TAX_RATE_IS_DEFAULT", "The default tax rate cannot be deleted. Make another rate the default first.");
+    }
+    const productCount = await Product.countDocuments({ organizationId, taxRateId: current._id }).session(session);
+    if (productCount > 0) {
+      throw ApiError.coded(
+        409,
+        "TAX_RATE_IN_USE",
+        `This tax rate is used by ${productCount} product${productCount === 1 ? "" : "s"}. Deactivate it instead, or move those products to another rate first.`,
+        [{ code: "TAX_RATE_IN_USE", meta: { productCount } }]
+      );
+    }
+    current.isDelete = true;
+    await current.save({ session });
+  });
 
   logger.info(`Tax rate deleted: ${taxRateId} org=${organizationId} by user=${actorUserId}`);
 }

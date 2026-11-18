@@ -369,8 +369,8 @@ export async function updateCategory(
  * Soft-deletes a category. Refused while any non-deleted product or subcategory is in it. The
  * subcategory check and the delete share a transaction: a child added concurrently claims this
  * category (claimParent), so one of the two conflicts and its retry sees the other.
- * NOTE: products do not claim their category, so a product created at the same instant as its
- * category is deleted can still reference a deleted category.
+ * A product saved into this category concurrently claims it too (catalogClaims.service), so the
+ * product check holds the same way.
  */
 export async function deleteCategory(organizationId: string, categoryId: string, actorUserId: string) {
   await findCategoryOrThrow(organizationId, categoryId);
