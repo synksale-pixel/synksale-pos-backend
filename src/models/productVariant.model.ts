@@ -67,6 +67,8 @@ export interface IProductVariant {
   reorderPoint: number | null;
   isDefault: boolean;
   isActive: boolean;
+  /** Bumped by every write that makes a document reference this variant (see catalogClaims.service). Internal. */
+  claimVersion: number;
   isDelete: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -168,6 +170,10 @@ const productVariantSchema = new Schema<IProductVariant, ProductVariantModel>(
       type: Boolean,
       default: true,
     },
+    claimVersion: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
@@ -252,6 +258,7 @@ const cleanTransform = (_doc: any, ret: any) => {
   delete ret.skuKey;
   delete ret.scanCodes;
   delete ret.comboKey;
+  delete ret.claimVersion;
   return ret;
 };
 

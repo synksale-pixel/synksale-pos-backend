@@ -27,6 +27,8 @@ export interface ITaxRate {
   /** The rate pre-selected for new products. At most one per organization. */
   isDefault: boolean;
   isActive: boolean;
+  /** Bumped by every write that makes a product reference this rate (see catalogClaims.service). Internal. */
+  claimVersion: number;
   isDelete: boolean;
   createdAt?: Date;
   updatedAt?: Date;
@@ -89,6 +91,10 @@ const taxRateSchema = new Schema<ITaxRate, TaxRateModel>(
       type: Boolean,
       default: true,
     },
+    claimVersion: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
@@ -128,6 +134,7 @@ taxRateSchema.plugin(tenantScopePlugin, { scope: "organization" });
 const cleanTransform = (_doc: any, ret: any) => {
   delete ret.__v;
   delete ret.nameKey;
+  delete ret.claimVersion;
   return ret;
 };
 

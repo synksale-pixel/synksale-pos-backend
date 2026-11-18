@@ -34,6 +34,7 @@ import { unitAllowsDecimal } from "../config/units.config";
 import { storesWithPermission } from "./permission.service";
 import { catalogRefs, storeRefs, userRefs, CatalogRefs, StoreRef, UserRef } from "./stock.service";
 import { applyMovement, readLevel } from "./stockLedger.service";
+import { claimVariants } from "./catalogClaims.service";
 import { lineTax, storeToday, taxRatesFor, toPurchaseOrderDetail } from "./purchaseOrder.service";
 import { isCalendarDate, PurchaseOrderStatus } from "../validators/purchaseOrder.validator";
 import { CreateGoodsReceiptInput } from "../validators/goodsReceipt.validator";
@@ -576,6 +577,15 @@ export async function createGoodsReceipt(
   } else {
     const vendor = await claimVendor(organizationId, input.vendorId!, session);
     planned = await planDirectLines(organizationId, input, vendor, settings);
+    // A PO's variants are held by the open PO; a receipt without one claims them itself, so a
+    // concurrent product/variant delete conflicts with it (catalogClaims.service).
+    const gone = new Set((await claimVariants(organizationId, planned.map((line) => line.variant._id), session)).map(String));
+    const missing = planned.flatMap((line, index): ApiErrorDetail[] =>
+      gone.has(line.variant._id.toString())
+        ? [{ field: `lines[${index}].variantId`, code: "VARIANT_NOT_FOUND", message: `Variant '${line.variant._id}' not found.` }]
+        : []
+    );
+    if (missing.length > 0) throw collected(400, missing);
     vendorId = vendor._id;
     vendorSnapshot = {
       name: vendor.name,

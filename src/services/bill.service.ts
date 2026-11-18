@@ -29,6 +29,7 @@ import { ProductVariant, ProductVariantDocument, variantDisplayName } from "../m
 import { Organization } from "../models/organization.model";
 import { TaxRate, TaxRateDocument } from "../models/taxRate.model";
 import { ApiError, ApiErrorDetail } from "../utils/ApiError";
+import { claimVariants } from "./catalogClaims.service";
 import { applyRate, formatMoney, multiplyMoney, parseMoney, sumMoney } from "../utils/money";
 import { fromMilli, toMilli } from "../utils/quantity";
 import { resolvePaging, buildPaginationMeta } from "../utils/pagination";
@@ -727,6 +728,16 @@ export async function createBill(organizationId: string, input: CreateBillInput,
   }
 
   const planned = await planLines(organizationId, input, vendor, settings, session);
+  // Goods lines' variants are held by their receipts; service lines claim theirs, so a concurrent
+  // product/variant delete conflicts with the bill (catalogClaims.service).
+  const serviceLines = planned.filter((line) => !line.receipt);
+  const gone = new Set((await claimVariants(organizationId, serviceLines.map((line) => line.variant._id), session)).map(String));
+  const missing = serviceLines.flatMap((line): ApiErrorDetail[] =>
+    gone.has(line.variant._id.toString())
+      ? [{ field: `lines[${line.index}].variantId`, code: "VARIANT_NOT_FOUND", message: `Variant '${line.variant._id}' not found.` }]
+      : []
+  );
+  if (missing.length > 0) throw collected(400, missing);
   const vatAdjustmentMinor = parseVatAdjustment(input.vatAdjustment, settings.decimals);
 
   const billDate = input.billDate ?? settings.today;
@@ -927,7 +938,7 @@ export async function voidBill(
 }
 
 /** Variants on any bill (service lines leave no other trace): the catalog cannot delete them. */
-export async function variantsOnBills(organizationId: string, variantIds: ObjectId[]): Promise<boolean> {
+export async function variantsOnBills(organizationId: string, variantIds: ObjectId[], session?: mongoose.ClientSession): Promise<boolean> {
   if (variantIds.length === 0) return false;
-  return (await Bill.exists({ organizationId, "lines.variantId": { $in: variantIds } })) !== null;
+  return (await Bill.exists({ organizationId, "lines.variantId": { $in: variantIds } }).session(session ?? null)) !== null;
 }

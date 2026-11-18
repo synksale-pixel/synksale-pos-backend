@@ -1998,3 +1998,46 @@ Testing: 10 new tests in `tests/integration/vendorReturns.test.ts` (29 in all):
 - another store's bill, and untracked-at-receipt goods.
 
 1400 tests pass.
+
+---
+
+## 🔒 Catalog delete races (hardening before Phase 4)
+
+These were deferred on 2026-10-17. A delete checked "nothing references this" and then wrote, while
+a save that added a reference committed in between. MongoDB transactions only conflict when both
+write the same document, so both succeeded and left a dangling reference.
+
+**Pattern (`src/services/catalogClaims.service.ts`):** every write that adds a reference also
+writes the referenced document (a hidden counter, `$inc`) inside its own transaction. Every delete
+re-checks its references and writes the document in one transaction. Whichever is second conflicts
+and is retried. The retry then either refuses the delete as in use, or finds the document gone and
+reports the usual not-found error.
+
+- **Category ↔ product:** product create, and an update that changes `categoryId`, claim the
+  category (`treeVersion`, the same counter subcategories claim). A lost race gives
+  `CATEGORY_NOT_FOUND` (400) or `CATEGORY_IN_USE` (409).
+- **Tax rate ↔ product:** product create/update claim a new `taxRateId` (`TaxRate.claimVersion`).
+  `deleteTaxRate` now re-reads the rate and counts products inside a transaction. A lost race
+  gives `TAX_RATE_NOT_FOUND` (400) or `TAX_RATE_IN_USE` (409).
+- **Product/variant delete ↔ purchase documents and stock:** the in-use checks (stock history,
+  receipts, bills, open POs) now run inside the delete's transaction, which writes every variant.
+  Claims on `ProductVariant.claimVersion`:
+  - PO create, and edits that send `lines`;
+  - receipts without a PO (a PO's variants are already held by the open PO);
+  - bill service lines (goods lines are held by their receipts);
+  - a variant's first stock movement in a store (`applyMovement`, only when it inserts the level
+    row). Later movements need no claim, so busy variants stay out of the hot path at the till.
+
+  A lost race gives `VARIANT_NOT_FOUND` (400) or `PRODUCT_IN_USE`/`VARIANT_IN_USE` (409).
+- `claimVersion` is hidden from every response, like `treeVersion`. No new error codes.
+
+### Deploy note
+
+No migration: the new counters default to 0 and `$inc` creates them on older documents.
+
+Testing: `tests/integration/deleteRaces.test.ts` (10 tests). Each fires the delete and the write
+together 6 times and checks the database: never both succeed, nothing references a deleted
+category, tax rate or variant, and the claim counters never show in responses.
+
+Still open for Phase 4: sales lines will add another variant reference. Untracked goods sold at the
+till leave no stock level, so a sale should claim like a bill service line.
