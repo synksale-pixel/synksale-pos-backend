@@ -102,9 +102,12 @@ async function loadReceipts(organizationId: string, storeId: string, input: Crea
   return resolved as { receipt: GoodsReceiptDocument; receiptLine: IGoodsReceiptLine }[];
 }
 
-async function loadBills(organizationId: string, input: CreateVendorReturnInput, session: mongoose.ClientSession) {
+async function loadBills(organizationId: string, storeId: string, input: CreateVendorReturnInput, session: mongoose.ClientSession) {
   const ids = [...new Set(input.lines.flatMap((line) => (line.billId ? [line.billId.toLowerCase()] : [])))];
-  const bills = ids.length ? await Bill.find({ organizationId, _id: { $in: ids.map(oid) } }).session(session) : [];
+  // Only bills with a line for this store's goods are visible: another store's bill is not found.
+  const bills = ids.length
+    ? await Bill.find({ organizationId, _id: { $in: ids.map(oid) }, "lines.storeId": oid(storeId) }).session(session)
+    : [];
   const byId = new Map(bills.map((bill) => [bill._id.toString(), bill]));
 
   const missing: ApiErrorDetail[] = [];
@@ -380,7 +383,7 @@ export async function createVendorReturn(
   }
 
   const receipts = await loadReceipts(organizationId, storeId, input, session);
-  const bills = await loadBills(organizationId, input, session);
+  const bills = await loadBills(organizationId, storeId, input, session);
   const catalog = await loadCatalog(
     organizationId,
     receipts.map((r) => r.receiptLine.variantId)
@@ -438,7 +441,8 @@ export async function createVendorReturn(
       receiptLine,
       variant: entry.variant,
       product: entry.product,
-      stocked: entry.product.type === "goods" && entry.product.inventory.trackInventory,
+      // As received: goods that added no stock take none away.
+      stocked: receiptLine.stocked,
       quantityMilli,
       unbilledMilli,
       creditedMilli,
@@ -622,10 +626,13 @@ export async function createVendorReturn(
     const key = line.bill._id.toString();
     const group = creditsByBill.get(key) ?? { bill: line.bill, credits: [] };
     // Credited at the bill line's price, never above what the line has left (after price adjustments).
-    const subtotalMinor = Math.min(
-      multiplyMoney(line.billLine.unitCostMinor, fromMilli(line.creditedMilli)),
-      Math.max(0, creditRoom(line.billLine).subtotalMinor)
-    );
+    // A credit that takes the line's last quantity takes all of its remaining subtotal: the pieces
+    // round separately and can sum to less than the line's own rounded subtotal.
+    const room = creditRoom(line.billLine);
+    const subtotalMinor =
+      line.creditedMilli === room.quantityMilli
+        ? Math.max(0, room.subtotalMinor)
+        : Math.min(multiplyMoney(line.billLine.unitCostMinor, fromMilli(line.creditedMilli)), Math.max(0, room.subtotalMinor));
     group.credits.push({ billLine: line.billLine, quantityMilli: line.creditedMilli, subtotalMinor, note: line.note });
     creditsByBill.set(key, group);
   }

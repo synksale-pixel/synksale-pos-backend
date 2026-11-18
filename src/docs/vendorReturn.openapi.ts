@@ -134,7 +134,7 @@ const RETURN_LINE_RULES = [
   "**Lines** (1 to 200)",
   "- Each line names a goods receipt line: `goodsReceiptId` + `goodsReceiptLineId` (the receipt's `lines[].id`), each receipt line at most once. The receipt must be **this store's** and from the return's `vendorId`. Goods not on a receipt cannot be returned.",
   "- `quantity` can never take the receipt line's `returnedQuantity` above its received `quantity`.",
-  "- `billId` + `billLineId` are needed only when `quantity` is more than the receipt line's `billableQuantity` (otherwise ignored). The bill line must bill this receipt line, on a bill that is not void, with enough quantity not yet credited. Goods billed across several bills: return them on separate returns, one bill line each.",
+  "- `billId` + `billLineId` are needed only when `quantity` is more than the receipt line's `billableQuantity`; when sent anyway they are still checked. A bill with no lines for this store is `BILL_NOT_FOUND`. The bill line must bill this receipt line, on a bill that is not void, with enough quantity not yet credited. Goods billed across several bills: return them on separate returns, one bill line each.",
   "- The store must have the stock: returning more than is on hand is refused (`INSUFFICIENT_STOCK`). Goods written off with a stock adjustment are no longer on hand, so return damaged goods **before** adjusting them out.",
   `- ${QUANTITY_RULE}`,
 ].join("\n");

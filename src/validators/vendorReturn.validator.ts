@@ -76,7 +76,7 @@ export const vendorReturnLineSchema = z
       .optional()
       .openapi({
         description:
-          "The bill to credit for the part of `quantity` that was already billed. Sent with `billLineId`. Needed only when `quantity` is more than what is still unbilled on the receipt line; ignored otherwise.",
+          "The bill to credit for the part of `quantity` that was already billed. Sent with `billLineId`. Needed only when `quantity` is more than what is still unbilled on the receipt line; when sent anyway it is still checked (it must be this store's bill and bill this receipt line).",
       }),
     billLineId: objectIdField("billLineId", "665f1c2e8a4b3c0012ab3e01")
       .optional()
