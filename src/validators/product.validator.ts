@@ -263,8 +263,33 @@ const inventoryGroup = z
       "Unknown inventory field. Send opening stock as inventory.openingStock: [{ storeId, quantity, unitCost }]; valuationMethod is fixed to weighted average.",
   });
 
+/** Why an HSN (goods) or SAC (services) code does not fit the product type, or null. */
+export function hsnOrSacProblem(type: "goods" | "service", code: string): string | null {
+  if (type === "service") return /^99\d{4}$/.test(code) ? null : "A service takes a 6-digit SAC starting with 99.";
+  return /^\d{4}(\d{2}){0,2}$/.test(code) && !code.startsWith("99") ? null : "Goods take a 4, 6 or 8-digit HSN code (not starting with 99, which is for services).";
+}
+
 const productFields = {
   name: z.string().trim().min(1, { message: "Product name is required." }).max(200).openapi({ example: "Crew-neck T-shirt" }),
+  nameAr: z
+    .string()
+    .trim()
+    .min(1, { message: "Arabic name cannot be empty. Send null to clear it." })
+    .max(200)
+    .nullable()
+    .optional()
+    .openapi({ description: "Arabic name, printed on Saudi receipts when set. null clears it.", example: "تيشيرت بياقة دائرية" }),
+  hsnOrSac: z
+    .string()
+    .trim()
+    .regex(/^\d{4,8}$/, { message: "hsnOrSac must be 4-8 digits." })
+    .nullable()
+    .optional()
+    .openapi({
+      description:
+        "HSN code (goods: 4, 6 or 8 digits, not starting with 99) or SAC (services: 6 digits starting with 99). Optional in every country; printed on Indian tax invoices and copied onto each sale line. null clears it.",
+      example: "61091000",
+    }),
   categoryId: objectIdField("categoryId", "665f1c2e8a4b3c0012ab3700").nullable().optional(),
   unit: z
     .enum(UNIT_CODES, { message: `unit must be one of: ${UNIT_CODES.join(", ")}.` })
@@ -461,6 +486,10 @@ export const createProductSchema = z
 
     if (body.taxPreference !== "standard" && body.taxRateId) {
       issues.push({ path: ["taxRateId"], message: `A ${body.taxPreference} product must not have a tax rate.` });
+    }
+    if (body.hsnOrSac) {
+      const problem = hsnOrSacProblem(body.type, body.hsnOrSac);
+      if (problem) issues.push({ path: ["hsnOrSac"], message: problem });
     }
 
     if (isSingle) {

@@ -14,6 +14,7 @@ import { ApiError } from "../utils/ApiError";
 import { logger } from "../config/logger.config";
 import { getRequestContext, runWithStoreContext } from "../utils/requestContext";
 import type { CreateStoreInput, UpdateStoreInput } from "../validators/store.validator";
+import { refuseUntilImplemented } from "../utils/contractPreview";
 
 export interface ListStoresInput {
   page?: number;
@@ -30,6 +31,16 @@ export async function createStore(
   input: CreateStoreInput,
   actorUserId: string
 ) {
+  refuseUntilImplemented("Phase 4a-1", {
+    legalName: input.legalName,
+    legalNameAr: input.legalNameAr,
+    taxRegistrationNumber: input.taxRegistrationNumber,
+    phone: input.phone,
+    email: input.email,
+    invoicePrefix: input.invoicePrefix,
+    receipt: input.receipt,
+    "address.stateCode": input.address?.stateCode,
+  });
   const code = input.code.trim().toUpperCase();
 
   const existing = await Store.findOne({ organizationId, code });
@@ -107,6 +118,16 @@ export async function updateStore(
   input: UpdateStoreInput,
   actorUserId: string
 ) {
+  refuseUntilImplemented("Phase 4a-1", {
+    legalName: input.legalName,
+    legalNameAr: input.legalNameAr,
+    taxRegistrationNumber: input.taxRegistrationNumber,
+    phone: input.phone,
+    email: input.email,
+    invoicePrefix: input.invoicePrefix,
+    receipt: input.receipt,
+    "address.stateCode": input.address?.stateCode,
+  });
   const $set: Record<string, unknown> = {};
   if (input.name !== undefined) $set.name = input.name;
   if (input.timezone !== undefined) $set.timezone = input.timezone;

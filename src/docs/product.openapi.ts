@@ -27,6 +27,9 @@ const variantParams = productIdParam.extend({
   variantId: z.string().openapi({ description: "Variant ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3801" }),
 });
 
+const PHASE_4A1_PRODUCT_NOTE =
+  "**Phase 4a-1 (contract preview: refused with 400 until implemented):** `nameAr` (Arabic name, printed on Saudi receipts when set) and `hsnOrSac` (goods: a 4, 6 or 8-digit HSN code not starting with 99; services: a 6-digit SAC starting with 99). Both are optional in every country and copied onto each sale line; null clears them.";
+
 const CONTRACT = [
   "**Rules**",
   "- Every product has at least one variant. Stock, purchase and sale lines always reference a `variantId`. A `single` item has one hidden default variant (`isDefault: true`); send its SKU, barcodes, prices and reorder point at the top level exactly as the form groups them. A `variant` item sends `attributes` + `variants` instead.",
@@ -339,7 +342,7 @@ registry.registerPath({
   path: base,
   tags,
   summary: "Create a product",
-  description: `${writeNote("product:create")}\n\n${CONTRACT}`,
+  description: `${writeNote("product:create")}\n\n${CONTRACT}\n\n${PHASE_4A1_PRODUCT_NOTE}`,
   security,
   request: {
     body: {
@@ -379,6 +382,7 @@ registry.registerPath({
     writeNote("product:update"),
     "",
     "Send any product field; `null` clears an optional one. `type` and `itemType` cannot change.",
+    PHASE_4A1_PRODUCT_NOTE,
     "- **Single items** may also send `sku`, `barcodes`, `sales.sellingPrice`, `purchase.costPrice`, `inventory.reorderPoint` (applied to the default variant). Variant items get `PRODUCT_IS_VARIANT_ITEM` (400) for these - use the variant endpoints.",
     "- **Variant items** may send the full `attributes` list to add options. Removing an option a variant uses (`ATTRIBUTE_OPTION_IN_USE`) or adding/removing a whole attribute (`ATTRIBUTES_LOCKED`) is refused (409). Attribute names keep their stored spelling and order (a differently-cased name in the request is matched, not renamed); options are replaced by the list sent. Sending `attributes` for a single item is a 400 `VALIDATION_FAILED`.",
     "- **Services** cannot be given a `brand`, `manufacturer`, `inventory.trackInventory: true` or an `inventory.reorderPoint` (400 `VALIDATION_FAILED`).",

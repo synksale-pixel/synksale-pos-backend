@@ -2041,3 +2041,93 @@ category, tax rate or variant, and the claim counters never show in responses.
 
 Still open for Phase 4: sales lines will add another variant reference. Untracked goods sold at the
 till leave no stock level, so a sale should claim like a bill service line.
+
+---
+
+## 🧾 Sales — Phase 4 plan and the 4a-1 contract (store, organization and product fields)
+
+### Phase 4 plan (decided 2026-11-18)
+
+Phase 4 is split into:
+- **4a foundations:** 4a-1 fields and settings, then 4a-2 registers, customers and the till lookup.
+- **4b** shifts / cash drawer.
+- **4c** checkout.
+- **4d** sale returns and voids.
+- **4e** Z-report and VAT summary.
+
+Vendor cash refunds (3e.2) moved to the go-live backlog. The catalog delete races were fixed first
+(PR #27).
+
+The user chose these 14 decisions:
+1. **No credit sales in v1.** Every sale is fully paid (split tender allowed).
+2. **Receipt numbering:** a series per store, with the store's prefix, restarting each fiscal year.
+   Each sale stores its `registerId`, so per-register numbering (ZATCA) can come later.
+3. **Voids:** a completed sale is never edited. A void is a full return document (its own
+   credit-note series), only within the same open shift, and needs `sale:void`.
+4. **Shifts:** a register needs an open shift to sell. Each sale carries `shiftId` + `registerId`.
+5. **Invoice type:** a full tax invoice only when the customer has a TRN/GSTIN; otherwise a
+   simplified invoice.
+6. **India GST:** till sales are always intra-state (CGST+SGST, place of supply = the store). A full
+   invoice to an out-of-state GSTIN is refused rather than issued wrongly.
+7. **Rounding and discounts:** VAT is rounded per line and then summed. A cart discount is split
+   across lines pro rata before VAT. Cash rounding (an org setting) applies to the cash tender only.
+8. **Pricing:** one org-wide variant price, plus a price override that needs a permission.
+9. **Payment methods:** a fixed set (cash, card, upi, bank_transfer) with an optional reference.
+10. **Sale returns:** receipt required, same store, refund to the original tender.
+11. **ZATCA Phase 1:** the QR code on Saudi receipts is built in 4c. Phase 2 integration comes later.
+12. **Arabic names:** optional `nameAr` on products and `legalNameAr` on the organization and stores.
+13. **Stores with no effective TRN** issue a plain receipt with no tax lines.
+14. **Tech-lead 4a defaults** accepted in full (below).
+
+### 4a-1 contract
+
+The new request fields are validated and documented, but refused with 400 `VALIDATION_FAILED`
+("arrives with the Phase 4a-1 implementation") until they are stored
+(`src/utils/contractPreview.ts`). Requests without them work as before. New response fields are
+optional while in preview.
+
+- **Tax IDs (`src/utils/taxId.ts`):** normalised (spaces and hyphens removed, uppercased), then
+  checked by country:
+  - IN: a GSTIN, with its mod-36 check character and a known state code;
+  - SA: 15 digits starting and ending with 3;
+  - AE, BH: 15 digits;
+  - elsewhere: 5-20 letters/digits.
+
+  `src/config/gstStates.config.ts` lists the GST state codes, including the retired 25 and 28.
+- **Stores:** new fields `legalName`, `legalNameAr`, `taxRegistrationNumber` (overrides the
+  organization's), `phone`, `email`, `invoicePrefix`, `receipt.headerText` / `footerText`, and
+  `address.stateCode`.
+  - `stateCode` is India only, required there, and must match the GSTIN's first two digits.
+  - An Indian store in another state must carry its own GSTIN.
+  - `invoicePrefix` is 1-5 letters/digits, unique per organization (`INVOICE_PREFIX_TAKEN`) and
+    fixed after the first sale (`INVOICE_PREFIX_LOCKED`). Numbers look like `PFX-YY-000123` and,
+    for credit notes, `PFX-YY-R000045`, at most 16 characters.
+  - Responses gain `effective` { legalName, legalNameAr, taxRegistrationNumber }.
+- **Organization:**
+  - `legalNameAr`;
+  - `settings.fiscalYearStartMonth`: India 4, else 1; `FISCAL_YEAR_LOCKED` after the first sale;
+  - `settings.sales.paymentMethods`: cash is always on;
+  - `settings.sales.cashRounding`: a decimal step from the currency's allowed list
+    (`CURRENCIES[].cashRoundingSteps`, returned as `cashRoundingSteps`);
+  - `settings.sales.maxDiscountPercent`.
+
+  The country of the currency now carries `fiscalYearStartMonth` and `defaultPaymentMethods`. The
+  profile's `currency` object is limited to code, name and decimals.
+- **Products:** `nameAr`, and `hsnOrSac` (goods: a 4/6/8-digit HSN not starting with 99; services: a
+  6-digit SAC starting with 99). Both optional everywhere.
+
+### For the 4a-1 implementation
+
+- Store the fields and remove the `refuseUntilImplemented` calls.
+- Run the service-level checks: store country vs stored values, IN `stateCode` required (backfill
+  existing Indian stores), org TRN vs currency country, `cashRounding` against the allow-list, and
+  `hsnOrSac` vs the stored product type on update.
+- Seed GST 18% (default) and 5% as CGST+SGST for Indian organizations.
+- Set org defaults from the country at signup.
+- `DocumentCounter` gains `storeId` + `fiscalYear`. The migration drops the old
+  `{organizationId, type}` unique index; the `$inc` moves into a `nextDocumentNumber` helper.
+
+Testing:
+- `tests/unit/phase4a1Validator.test.ts` (15): tax IDs, store, organization and product rules, and
+  the currency and country config.
+- `tests/integration/phase4a1Contract.test.ts` (5): preview refusals and the OpenAPI document.

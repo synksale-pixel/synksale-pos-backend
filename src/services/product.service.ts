@@ -32,6 +32,7 @@ import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
 import { assertCategoryExists, categoryNotFound, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
 import { claimCategory, claimTaxRate } from "./catalogClaims.service";
+import { refuseUntilImplemented } from "../utils/contractPreview";
 import { assertVendorSelectable, vendorRefs, VendorRef } from "./vendor.service";
 import { openPurchaseOrderNumbers } from "./purchaseOrder.service";
 import { GoodsReceipt } from "../models/goodsReceipt.model";
@@ -771,6 +772,7 @@ export async function lookupProduct(organizationId: string, code: string, option
 // ==========================================
 
 export async function createProduct(organizationId: string, input: CreateProductInput, actorUserId: string) {
+  refuseUntilImplemented("Phase 4a-1", { nameAr: input.nameAr, hsnOrSac: input.hsnOrSac });
   const decimals = await currencyDecimals(organizationId);
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
@@ -942,6 +944,7 @@ export async function updateProduct(
   input: UpdateProductInput,
   actorUserId: string
 ) {
+  refuseUntilImplemented("Phase 4a-1", { nameAr: input.nameAr, hsnOrSac: input.hsnOrSac });
   const product = await findProductOrThrow(organizationId, productId);
   const decimals = await currencyDecimals(organizationId);
   const isSingle = product.itemType === "single";
