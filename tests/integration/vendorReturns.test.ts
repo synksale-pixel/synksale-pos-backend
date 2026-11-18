@@ -13,9 +13,11 @@ import { Organization } from "../../src/models/organization.model";
 import { User } from "../../src/models/user.model";
 import { Role } from "../../src/models/role.model";
 import { Store } from "../../src/models/store.model";
+import { Product } from "../../src/models/product.model";
 import { StockLevel } from "../../src/models/stockLevel.model";
 import { StockMovement } from "../../src/models/stockMovement.model";
 import { Vendor } from "../../src/models/vendor.model";
+import { Bill } from "../../src/models/bill.model";
 import { DebitNote } from "../../src/models/debitNote.model";
 import { VendorReturn } from "../../src/models/vendorReturn.model";
 import { seedDefaultRolesForOrganization } from "../../src/services/roleSeed.service";
@@ -268,6 +270,14 @@ describe("return goods that were never billed", () => {
     expect(rtn.lines[0]).toMatchObject({ stocked: false, unitCost: null, stockValue: "0.000", quantityAfter: null });
     expect(await StockMovement.countDocuments({ organizationId: ctx.org._id, type: "vendor_return" })).toBe(0);
   });
+
+  it("goods received untracked stay untracked on return, even after the product starts tracking stock", async () => {
+    const grn = await receipt({ lines: [{ variantId: bags.variantId, quantity: 10, unitCost: "0.100" }] });
+    await Product.updateOne({ _id: bags.productId }, { $set: { "inventory.trackInventory": true } });
+    const rtn = await returnOk({ lines: [line(grn, 3)] });
+    expect(rtn.lines[0]).toMatchObject({ stocked: false, quantityAfter: null });
+    expect(await StockMovement.countDocuments({ organizationId: ctx.org._id, type: "vendor_return" })).toBe(0);
+  });
 });
 
 describe("return goods that were billed", () => {
@@ -384,6 +394,15 @@ describe("return problems", () => {
 
     const noVendor = await postReturn({ vendorId: grn1.id, lines: [line(grn1, 1)] });
     expect([noVendor.status, noVendor.body.code]).toEqual([400, "VENDOR_NOT_FOUND"]);
+  });
+
+  it("another store's bill is not found, and its number is not revealed", async () => {
+    const grnA = await receipt();
+    const grnB = await receipt({ storeId: ctx.storeB._id });
+    const billedB = await bill(grnB);
+    const res = await postReturn({ lines: [line(grnA, 1, { billId: billedB.id, billLineId: billedB.lines[0].id })] });
+    expect([res.status, res.body.code, res.body.errors[0].field]).toEqual([404, "BILL_NOT_FOUND", "lines[0].billId"]);
+    expect(JSON.stringify(res.body)).not.toContain(billedB.number);
   });
 
   it("needs the stock on hand, even when negative stock is allowed", async () => {
@@ -658,5 +677,153 @@ describe("lists and response schemas", () => {
     expect(got.body.data.vendorReturn).toEqual(rtn);
     const otherStore = await request.get(`${rtnPath(ctx.storeB._id)}/${rtn.id}`).set(auth(admin));
     expect([otherStore.status, otherStore.body.code]).toEqual([404, "VENDOR_RETURN_NOT_FOUND"]);
+  });
+});
+
+// ==========================================
+// Rounding
+// ==========================================
+
+describe("credit rounding on fractional quantities", () => {
+  it("returning a line's last quantity credits all that is left of it, so the bill settles exactly", async () => {
+    const rice = await product(goods({ name: "Rice", sku: "RICE-1", unit: "kg", purchase: { costPrice: "0.001" } }));
+    // 200.8 kg at 0.001 = 201 minor (200.8 rounded); two returns of 100.4 each round to 100 minor.
+    const grn = await receipt({ lines: [{ variantId: rice.variantId, quantity: 200.8, unitCost: "0.001" }] });
+    const billed = await bill(grn);
+    expect(billed.lines[0]).toMatchObject({ subtotal: "0.201", tax: { tax: "0.020" }, total: "0.221" });
+    const named = { billId: billed.id, billLineId: billed.lines[0].id };
+    await returnOk({ lines: [line(grn, 100.4, named)] });
+    await returnOk({ lines: [line(grn, 100.4, named)] });
+
+    const after = await getBill(billed.id);
+    expect(after.lines[0]).toMatchObject({ returnedQuantity: 200.8, credited: "0.201" });
+    expect(after).toMatchObject({ credited: "0.221", balanceDue: "0.000", status: "paid" });
+    const notes = await DebitNote.find({ organizationId: ctx.org._id }).sort({ sequence: 1 });
+    expect(notes.reduce((sum, n) => sum + n.subtotalMinor, 0)).toBe(201);
+    expect(notes.reduce((sum, n) => sum + n.taxMinor, 0)).toBe(20);
+  });
+});
+
+// ==========================================
+// Concurrency
+// ==========================================
+
+describe("concurrent returns, bills, payments and debit note credit", () => {
+  const pay = (billId: string, amount: string) =>
+    request
+      .post(PAYMENTS)
+      .set(auth(admin))
+      .set("Idempotency-Key", newKey())
+      .send({ vendorId: vatVendor, amount, method: "cash", allocations: [{ billId, amount }] });
+
+  it("two returns racing for the same receipt line: one wins, nothing over-returns and stock never goes below what is left", async () => {
+    const grn = await receipt(); // 24
+    const results = await Promise.all([postReturn({ lines: [line(grn, 14)] }), postReturn({ lines: [line(grn, 14)] })]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(await receiptLine(grn.id)).toMatchObject({ returnedQuantity: 14, billableQuantity: 10 });
+    expect((await stockOf(coffee.variantId))!.quantityMilli).toBe(10000);
+    expect(await StockMovement.countDocuments({ organizationId: ctx.org._id, type: "vendor_return" })).toBe(1);
+    expect(await VendorReturn.countDocuments({ organizationId: ctx.org._id })).toBe(1);
+  });
+
+  it("two returns of different receipts racing for the same stock cannot take more than is on hand", async () => {
+    const grn1 = await receipt();
+    const grn2 = await receipt();
+    const adjust = await request
+      .post(`/api/v1/stores/${ctx.storeA._id}/stock-adjustments`)
+      .set(auth(admin))
+      .set("Idempotency-Key", newKey())
+      .send({ reason: "damaged", lines: [{ variantId: coffee.variantId, quantityChange: -28 }] }); // 48 -> 20
+    expect(adjust.status, JSON.stringify(adjust.body)).toBe(201);
+    const results = await Promise.all([postReturn({ lines: [line(grn1, 15)] }), postReturn({ lines: [line(grn2, 15)] })]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect((await stockOf(coffee.variantId))!.quantityMilli).toBe(5000);
+  });
+
+  it("a return racing a bill for the same receipt line: billed + returned-unbilled never exceeds what was received", async () => {
+    const grn = await receipt(); // 24
+    const billBody = {
+      vendorId: vatVendor,
+      vendorInvoiceNumber: "RACE-1",
+      billDate: "2026-11-05",
+      lines: [{ goodsReceiptId: grn.id, goodsReceiptLineId: grn.lines[0], quantity: 24 }],
+    };
+    const results = await Promise.all([
+      postReturn({ lines: [line(grn, 12)] }),
+      request.post(BILLS).set(auth(admin)).set("Idempotency-Key", newKey()).send(billBody),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    const stored = (await receiptLine(grn.id)) as { billedQuantity: number; returnedQuantity: number; billableQuantity: number };
+    expect(stored.billedQuantity + stored.returnedQuantity).toBeLessThanOrEqual(24);
+    expect(stored.billableQuantity).toBeGreaterThanOrEqual(0);
+  });
+
+  it("a return's credit racing a payment on the same bill: paid + credited never exceeds the total", async () => {
+    const grn = await receipt();
+    const billed = await bill(grn); // 42.240
+    const results = await Promise.all([
+      pay(billed.id, "42.240"),
+      postReturn({ lines: [line(grn, 2, { billId: billed.id, billLineId: billed.lines[0].id })] }),
+    ]);
+    expect(results[1].status, JSON.stringify(results[1].body)).toBe(201);
+    expect([201, 409]).toContain(results[0].status);
+    const stored = (await Bill.findById(billed.id))!;
+    expect(stored.paidMinor + stored.creditedMinor).toBeLessThanOrEqual(stored.totalMinor);
+    expect(stored.status).toBe(stored.paidMinor + stored.creditedMinor >= stored.totalMinor ? "paid" : "partially_paid");
+    // The payment went first (the credit stays on the note) or the credit did (the payment is refused).
+    if (results[0].status === 201) expect([stored.paidMinor, stored.creditedMinor]).toEqual([42240, 0]);
+    else expect(results[0].body.code).toBe("PAYMENT_EXCEEDS_DUE");
+  });
+
+  it("a price adjustment racing a payment of the whole bill: paid + credited never exceeds the total", async () => {
+    const grn = await receipt();
+    const billed = await bill(grn); // 42.240
+    const results = await Promise.all([
+      pay(billed.id, "42.240"),
+      postNote({ billId: billed.id, lines: [{ billLineId: billed.lines[0].id, amount: "1.000" }] }),
+    ]);
+    expect(results[1].status, JSON.stringify(results[1].body)).toBe(201);
+    expect([201, 409]).toContain(results[0].status);
+    const stored = (await Bill.findById(billed.id))!;
+    expect(stored.paidMinor + stored.creditedMinor).toBeLessThanOrEqual(stored.totalMinor);
+  });
+
+  it("two applications of the same vendor credit racing: the note's credit is applied once, never above what it holds", async () => {
+    const grn1 = await receipt();
+    const grn2 = await receipt();
+    const grn3 = await receipt();
+    const bill1 = await bill(grn1, { invoice: "A" });
+    await pay(bill1.id, "42.240");
+    const bill2 = await bill(grn2, { invoice: "B", quantity: 4 }); // 7.040
+    const bill3 = await bill(grn3, { invoice: "C", quantity: 4 }); // 7.040
+    const rtn = await returnOk({ lines: [line(grn1, 5, { billId: bill1.id, billLineId: bill1.lines[0].id })] }); // 8.800 open
+    const note = await getNote(rtn.debitNotes[0].id);
+    expect(note).toMatchObject({ status: "open", unapplied: "8.800" });
+
+    const results = await Promise.all([
+      applyNote(note.id, { version: note.version, applications: [{ billId: bill2.id, amount: "6.000" }] }),
+      applyNote(note.id, { version: note.version, applications: [{ billId: bill3.id, amount: "6.000" }] }),
+    ]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    const stored = (await DebitNote.findById(note.id))!;
+    expect(stored.appliedMinor).toBe(6000);
+    expect(stored.applications).toHaveLength(1);
+    const credited = (await Bill.find({ _id: { $in: [bill2.id, bill3.id] } })).reduce((sum, b) => sum + b.creditedMinor, 0);
+    expect(credited).toBe(6000);
+  });
+
+  it("two applications of the same credit to the same bill racing: one is refused", async () => {
+    const grn1 = await receipt();
+    const grn2 = await receipt();
+    const bill1 = await bill(grn1, { invoice: "A" });
+    await pay(bill1.id, "42.240");
+    const bill2 = await bill(grn2, { invoice: "B" }); // 42.240
+    const rtn = await returnOk({ lines: [line(grn1, 5, { billId: bill1.id, billLineId: bill1.lines[0].id })] });
+    const note = await getNote(rtn.debitNotes[0].id);
+    const body = { version: note.version, applications: [{ billId: bill2.id, amount: "5.000" }] };
+    const results = await Promise.all([applyNote(note.id, body), applyNote(note.id, body)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect((await Bill.findById(bill2.id))!.creditedMinor).toBe(5000);
+    expect((await DebitNote.findById(note.id))!.appliedMinor).toBe(5000);
   });
 });

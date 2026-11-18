@@ -1967,3 +1967,34 @@ Testing:
   add them.
 
 Requestly: `docs/requestly/section-13-vendor-returns.postman_collection.json` (87 requests).
+
+---
+
+## 🧾 Purchases — Phase 3e review fixes
+
+pos-tester review of the 3e implementation, plus the open questions it raised (decided 2026-11-18).
+
+- **Credit rounding (bug):** returning a fractional-quantity line in parts could leave the line
+  short by 0.001 (e.g. 200.8 kg returned as 2 × 100.4), so the bill never settled. The return
+  that takes a line's last creditable quantity now credits all of the line's remaining subtotal
+  (VAT already worked that way).
+- **Another store's bill:** a return now only sees bills with a line for its own store. Any
+  other bill is `BILL_NOT_FOUND`, so a store role can no longer learn another store's bill
+  numbers or quantities from the 400/409 messages. Crediting was never possible across stores
+  (the bill line must bill this store's receipt line).
+- **`billId` when not needed:** still checked when sent. The validator and Swagger text now say
+  so instead of "ignored".
+- **`stocked` on a return line** now comes from the receipt line as received, not from the
+  product's current `trackInventory`. Goods that added no stock take none away.
+- **`voidDebitNote`:** the defensive plain `Error` (a 500) is now `BILL_STATUS_CONFLICT` (409).
+- Left as designed: a fully paid bill keeps the return's credit on the note as vendor credit;
+  a duplicate receipt line is already refused by the validator.
+
+Testing: 10 new tests in `tests/integration/vendorReturns.test.ts` (29 in all):
+- the rounding case;
+- 7 races: two returns of one receipt line, two returns competing for the same stock, a return
+  vs a bill, a return's credit vs a payment, a price adjustment vs a payment, and two
+  applications of one note (to two bills and to the same bill). No concurrency bugs found.
+- another store's bill, and untracked-at-receipt goods.
+
+1400 tests pass.

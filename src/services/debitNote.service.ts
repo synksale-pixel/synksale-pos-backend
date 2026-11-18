@@ -694,7 +694,7 @@ export async function voidDebitNote(
     const bill = await Bill.findOne({ _id: oid(billId), organizationId: orgId }).session(session);
     // A bill credited by a note that is not void cannot be voided, and credit only grows by applications.
     if (!bill || bill.status === "void" || (bill.creditedMinor ?? 0) < amount) {
-      throw new Error(`Debit note ${note.number}: bill ${billId} does not hold this credit.`);
+      throw billChanged("billId");
     }
     const inc: Record<string, number> = { version: 1 };
     if (amount > 0) inc.creditedMinor = -amount;
