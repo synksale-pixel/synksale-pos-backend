@@ -14,6 +14,7 @@ import { ApiError } from "../utils/ApiError";
 import { logger } from "../config/logger.config";
 import { COUNTRIES, getCountryForCurrency, getCurrency } from "../config/currencies.config";
 import type { UpdateOrganizationInput } from "../validators/organization.validator";
+import { refuseUntilImplemented } from "../utils/contractPreview";
 
 async function findOrganizationOrThrow(organizationId: string): Promise<OrganizationDocument> {
   const organization = await Organization.findById(organizationId);
@@ -45,7 +46,7 @@ function toProfile(organization: OrganizationDocument) {
         pricesIncludeTax: organization.settings.sales?.pricesIncludeTax ?? true,
       },
     },
-    currency,
+    currency: { code: currency.code, name: currency.name, decimals: currency.decimals },
     country: country ? { code: country.code, name: country.name } : null,
   };
 }
@@ -93,6 +94,13 @@ export async function updateOrganization(
   actorUserId: string
 ) {
   const organization = await findOrganizationOrThrow(organizationId);
+  refuseUntilImplemented("Phase 4a-1", {
+    legalNameAr: input.legalNameAr,
+    "settings.fiscalYearStartMonth": input.settings?.fiscalYearStartMonth,
+    "settings.sales.paymentMethods": input.settings?.sales?.paymentMethods,
+    "settings.sales.cashRounding": input.settings?.sales?.cashRounding,
+    "settings.sales.maxDiscountPercent": input.settings?.sales?.maxDiscountPercent,
+  });
 
   const $set: Record<string, unknown> = {};
   if (input.legalName !== undefined) $set.legalName = input.legalName;

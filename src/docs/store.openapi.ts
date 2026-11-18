@@ -15,6 +15,15 @@ import {
 
 const security = [{ tenantBearerAuth: [] }];
 const tags = ["Stores"];
+
+const PHASE_4A1_NOTE = [
+  "**Phase 4a-1 (contract preview: these fields are refused with 400 until implemented):** `legalName`, `legalNameAr`, `taxRegistrationNumber`, `phone`, `email`, `invoicePrefix`, `receipt.headerText` / `receipt.footerText` and `address.stateCode`.",
+  "- A store in India needs `address.stateCode` (two-digit GST state code, printed as the place of supply); other countries must not send it.",
+  "- `taxRegistrationNumber` is checked against the store's country: IN a valid GSTIN (with check character) starting with the store's stateCode; SA 15 digits starting and ending with 3; AE/BH 15 digits; elsewhere 5-20 letters/digits. null uses the organization's.",
+  "- An Indian store in a different state from the organization's GSTIN must have its own GSTIN (400 on `taxRegistrationNumber`): a GSTIN is per state.",
+  "- `invoicePrefix` (1-5 letters/digits, stored uppercase) is unique in the organization (409 `INVOICE_PREFIX_TAKEN`), required before the store's first sale, and fixed once it has one (409 `INVOICE_PREFIX_LOCKED`).",
+  "- Responses gain these fields and `effective` { legalName, legalNameAr, taxRegistrationNumber }: the store's own value, else the organization's. A null effective TRN means the store is not VAT/GST-registered and prints plain receipts with no tax lines.",
+].join("\n");
 const base = `${API}/stores`;
 
 const storeIdParam = z.object({
@@ -57,7 +66,8 @@ registry.registerPath({
   tags,
   summary: "Create a store",
   description:
-    "Requires a **tenant** bearer token and the **`store:create`** permission (organization-scoped roles such as org_admin). The store is always created in the caller's organization. `code` is unique per organization, stored uppercase and cannot be changed later. `countryCode` is REQUIRED and must be a country that uses the organization's currency (e.g. `BH` for a BHD organization, `AE` for AED), otherwise the request fails with 400 `STORE_COUNTRY_CURRENCY_MISMATCH`.",
+    "Requires a **tenant** bearer token and the **`store:create`** permission (organization-scoped roles such as org_admin). The store is always created in the caller's organization. `code` is unique per organization, stored uppercase and cannot be changed later. `countryCode` is REQUIRED and must be a country that uses the organization's currency (e.g. `BH` for a BHD organization, `AE` for AED), otherwise the request fails with 400 `STORE_COUNTRY_CURRENCY_MISMATCH`.\n\n" +
+    PHASE_4A1_NOTE,
   security,
   request: {
     body: {
@@ -174,7 +184,7 @@ registry.registerPath({
   path: `${base}/{storeId}`,
   tags,
   summary: "Update a store",
-  description: `${managePathNote}\n\nRequires **\`store:configure\`**. Updatable fields: \`name\`, \`address\` (any subset of fields), \`countryCode\` and \`timezone\`; send at least one. \`countryCode\` (optional here) must be a country that uses the organization's currency, otherwise 400 \`STORE_COUNTRY_CURRENCY_MISMATCH\`. \`code\` is immutable: sending it (or any unknown field) returns 400.`,
+  description: `${managePathNote}\n\nRequires **\`store:configure\`**. Updatable fields: \`name\`, \`address\` (any subset of fields), \`countryCode\` and \`timezone\`; send at least one. \`countryCode\` (optional here) must be a country that uses the organization's currency, otherwise 400 \`STORE_COUNTRY_CURRENCY_MISMATCH\`. \`code\` is immutable: sending it (or any unknown field) returns 400.\n\n${PHASE_4A1_NOTE}`,
   security,
   request: {
     params: storeIdParam,
