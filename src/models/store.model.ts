@@ -20,6 +20,8 @@ export interface IStore {
     state: string;
     country: string;
     postalCode: string;
+    /** India only: two-digit GST state code, printed as the place of supply. Null elsewhere. */
+    stateCode?: string | null;
   };
   /**
    * ISO 3166-1 alpha-2 country. Must use the organization's currency (checked in the service).
@@ -27,6 +29,16 @@ export interface IStore {
    */
   countryCode?: string;
   timezone: string;
+  // ---- Receipt identity (Phase 4a-1). Null = use the organization's value (see storeView). ----
+  legalName?: string | null;
+  legalNameAr?: string | null;
+  /** This store's own VAT TRN / GSTIN (e.g. an Indian store in another state). */
+  taxRegistrationNumber?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  /** Starts sale invoice and credit note numbers; unique per organization; fixed after the first sale. */
+  invoicePrefix?: string | null;
+  receipt?: { headerText?: string | null; footerText?: string | null };
   isActive: boolean;
   isDelete: boolean;
   createdAt?: Date;
@@ -41,6 +53,8 @@ export type StoreDocument = Document<
   IStore;
 
 export type StoreModel = mongoose.Model<IStore, Record<string, never>>;
+
+const nullableText = { type: String, trim: true, default: null };
 
 const storeSchema = new Schema<IStore, StoreModel>(
   {
@@ -84,6 +98,7 @@ const storeSchema = new Schema<IStore, StoreModel>(
         required: [true, "Postal code is required"],
         trim: true,
       },
+      stateCode: { type: String, default: null },
     },
     countryCode: {
       type: String,
@@ -94,6 +109,21 @@ const storeSchema = new Schema<IStore, StoreModel>(
     timezone: {
       type: String,
       required: [true, "Store timezone is required"],
+    },
+    legalName: nullableText,
+    legalNameAr: nullableText,
+    taxRegistrationNumber: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: null,
+    },
+    phone: nullableText,
+    email: { type: String, trim: true, lowercase: true, default: null },
+    invoicePrefix: { type: String, trim: true, uppercase: true, default: null },
+    receipt: {
+      headerText: nullableText,
+      footerText: nullableText,
     },
     isActive: {
       type: Boolean,
@@ -117,6 +147,15 @@ const storeSchema = new Schema<IStore, StoreModel>(
  * but different organizations are allowed to have stores with the same code (e.g. Org A has "STR-001" and Org B has "STR-001").
  */
 storeSchema.index({ organizationId: 1, code: 1 }, { unique: true });
+
+/** invoicePrefix unique within the organization, enforced by MongoDB; stores without one are left out. */
+storeSchema.index(
+  { organizationId: 1, invoicePrefix: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { invoicePrefix: { $type: "string" } },
+  }
+);
 
 // Apply the tenant scope plugin (Store is scoped at the organization level only, not store-level)
 storeSchema.plugin(tenantScopePlugin, { scope: "organization" });

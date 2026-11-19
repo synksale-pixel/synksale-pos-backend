@@ -32,6 +32,10 @@ export interface IProduct {
   name: string;
   /** Lowercased, trimmed name; backs the case-insensitive prefix search and the name sort. */
   nameKey: string;
+  /** Arabic name, printed on Saudi receipts when set. */
+  nameAr?: string | null;
+  /** HSN (goods) or SAC (services) code, printed on Indian tax invoices. */
+  hsnOrSac?: string | null;
   type: ProductType;
   itemType: ItemType;
   categoryId: mongoose.Types.ObjectId | null;
@@ -113,6 +117,8 @@ const productSchema = new Schema<IProduct, ProductModel>(
       enum: UNIT_CODES,
       default: DEFAULT_UNIT,
     },
+    nameAr: nullableText,
+    hsnOrSac: nullableText,
     brand: nullableText,
     manufacturer: nullableText,
     taxPreference: {

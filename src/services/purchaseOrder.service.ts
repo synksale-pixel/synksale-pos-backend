@@ -17,7 +17,7 @@
 
 import mongoose from "mongoose";
 import { PurchaseOrder, PurchaseOrderDocument, IPurchaseOrderLine, IPurchaseOrderLineTax } from "../models/purchaseOrder.model";
-import { DocumentCounter } from "../models/documentCounter.model";
+import { nextDocumentNumber } from "./documentNumber.service";
 import { Vendor, VendorDocument, VatTreatment } from "../models/vendor.model";
 import { Product, ProductDocument } from "../models/product.model";
 import { ProductVariant, ProductVariantDocument, variantDisplayName } from "../models/productVariant.model";
@@ -651,12 +651,7 @@ export async function createPurchaseOrder(
   const built = await buildLines(organizationId, fromInput(input.lines), vendor.vatTreatment, decimals, session);
 
   const orgId = oid(organizationId);
-  const counter = await DocumentCounter.findOneAndUpdate(
-    { organizationId: orgId, type: "purchase_order" },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, session }
-  );
-  const sequence = counter!.seq;
+  const sequence = await nextDocumentNumber({ organizationId: orgId, type: "purchase_order" }, session);
 
   const [po] = await PurchaseOrder.create(
     [

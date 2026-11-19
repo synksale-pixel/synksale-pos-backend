@@ -22,7 +22,7 @@ import { VendorPayment } from "../models/vendorPayment.model";
 import { DebitNote } from "../models/debitNote.model";
 import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine, billableMilli } from "../models/goodsReceipt.model";
 import { PurchaseOrder, IPurchaseOrderLineTax } from "../models/purchaseOrder.model";
-import { DocumentCounter } from "../models/documentCounter.model";
+import { nextDocumentNumber } from "./documentNumber.service";
 import { Vendor, VendorDocument } from "../models/vendor.model";
 import { Product, ProductDocument } from "../models/product.model";
 import { ProductVariant, ProductVariantDocument, variantDisplayName } from "../models/productVariant.model";
@@ -791,12 +791,7 @@ export async function createBill(organizationId: string, input: CreateBillInput,
   // Counts toward the vendor's purchase documents, so it cannot be deleted (VENDOR_IN_USE).
   await Vendor.updateOne({ _id: vendor._id, organizationId: orgId }, { $inc: { purchaseDocumentCount: 1 } }, { session });
 
-  const counter = await DocumentCounter.findOneAndUpdate(
-    { organizationId: orgId, type: "bill" },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, session }
-  );
-  const sequence = counter!.seq;
+  const sequence = await nextDocumentNumber({ organizationId: orgId, type: "bill" }, session);
   const number = `BILL-${String(sequence).padStart(5, "0")}`;
   const actor = oid(actorUserId);
 

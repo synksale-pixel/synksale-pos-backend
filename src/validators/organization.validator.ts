@@ -5,7 +5,7 @@
 
 import "../config/openapi.registry"; // must load first: enables .openapi() on Zod
 import { z } from "zod";
-import { CURRENCY_CODES, PAYMENT_METHODS } from "../config/currencies.config";
+import { CURRENCY_CODES, SALE_PAYMENT_METHODS } from "../config/currencies.config";
 import { timezoneField } from "./store.validator";
 
 export const currencyField = z
@@ -87,14 +87,14 @@ export const updateOrganizationSchema = z
               example: true,
             }),
             paymentMethods: z
-              .array(z.enum(PAYMENT_METHODS, { message: `payment methods must be from: ${PAYMENT_METHODS.join(", ")}.` }))
+              .array(z.enum(SALE_PAYMENT_METHODS, { message: `payment methods must be from: ${SALE_PAYMENT_METHODS.join(", ")}.` }))
               .min(1)
               .refine((methods) => new Set(methods).size === methods.length, { message: "paymentMethods must not repeat a method." })
               .refine((methods) => methods.includes("cash"), { message: "cash cannot be disabled: refunds and cash rounding rely on it." })
               .optional()
               .openapi({
                 description:
-                  "Payment methods the till offers; the full list replaces the stored one. Values: cash, card, upi, bank_transfer. cash is always required. Defaults from the country: all four for India, cash, card and bank_transfer elsewhere.",
+                  "Payment methods the till offers; the full list replaces the stored one. Values: cash, card, wallet (any digital wallet or instant payment: UPI in India, BenefitPay, STC Pay...), bank_transfer. cash is always required. New organizations get all four.",
                 example: ["cash", "card", "bank_transfer"],
               }),
             cashRounding: z

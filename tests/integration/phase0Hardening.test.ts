@@ -328,16 +328,32 @@ describe("Phase 0 hardening", () => {
       await request.post("/api/v1/auth/signup").send({ ...body("c3@x.test"), currency: "" }).expect(400);
     });
 
-    it("seeds the country's rate as the single default for OMR and SAR, none for QAR and INR", async () => {
-      const expected: Record<string, number[]> = { OMR: [5], SAR: [15], QAR: [], INR: [] };
+    it("seeds the country's VAT rate as the default for OMR and SAR, none for QAR, GST 18% + 5% for INR", async () => {
+      const expected: Record<string, [string, number, boolean][]> = {
+        OMR: [["VAT 5%", 5, true]],
+        SAR: [["VAT 15%", 15, true]],
+        QAR: [],
+        INR: [
+          ["GST 18%", 18, true],
+          ["GST 5%", 5, false],
+        ],
+      };
       for (const [cur, rates] of Object.entries(expected)) {
         const email = `${cur.toLowerCase()}@x.test`;
         await request.post("/api/v1/auth/signup").send(body(email, cur)).expect(201);
         const org = await Organization.findOne({ applicantEmail: email });
-        const found = await TaxRate.find({ organizationId: org!._id });
-        expect(found.map((r) => r.rate), cur).toEqual(rates);
-        for (const r of found) expect(r.isDefault).toBe(true);
+        const found = await TaxRate.find({ organizationId: org!._id }).sort({ rate: -1 });
+        expect(found.map((r) => [r.name, r.rate, r.isDefault]), cur).toEqual(rates);
+        // Sales defaults come from the country: India's fiscal year starts in April.
+        expect(org!.settings.fiscalYearStartMonth, cur).toBe(cur === "INR" ? 4 : 1);
+        expect(org!.settings.sales.paymentMethods, cur).toEqual(["cash", "card", "wallet", "bank_transfer"]);
       }
+      const inr = await Organization.findOne({ applicantEmail: "inr@x.test" });
+      const gst18 = await TaxRate.findOne({ organizationId: inr!._id, name: "GST 18%" });
+      expect(gst18!.components.map((c) => [c.name, c.rate])).toEqual([
+        ["CGST", 9],
+        ["SGST", 9],
+      ]);
     });
   });
 

@@ -52,16 +52,17 @@ async function makeDefault(
 }
 
 /**
- * Seeds the standard VAT rate of the organization's country as its default rate. Countries
- * without VAT (Kuwait, Qatar) get nothing. Idempotent: skipped when the org already has rates.
+ * Seeds the country's tax rates, the first as the default: the standard VAT rate in the GCC, and
+ * GST 18% (default) and 5% as CGST + SGST in India. Countries without VAT (Kuwait, Qatar) get
+ * nothing. Idempotent: skipped when the org already has rates.
  */
 export async function seedDefaultTaxRates(
   organizationId: mongoose.Types.ObjectId,
   currency: string,
   options?: { session?: mongoose.ClientSession }
 ) {
-  const standard = getCountryForCurrency(currency)?.standardTaxRate;
-  if (!standard) {
+  const rates = getCountryForCurrency(currency)?.defaultTaxRates ?? [];
+  if (rates.length === 0) {
     return [];
   }
 
@@ -70,16 +71,15 @@ export async function seedDefaultTaxRates(
     return [];
   }
 
+  // ordered: true is required for create() with several docs inside a transaction.
   return TaxRate.create(
-    [
-      {
-        organizationId,
-        name: `${standard.name} ${standard.rate}%`,
-        components: [{ name: standard.name, rate: standard.rate }],
-        isDefault: true,
-      },
-    ],
-    { session: options?.session }
+    rates.map((rate, index) => ({
+      organizationId,
+      name: rate.name,
+      components: rate.components,
+      isDefault: index === 0,
+    })),
+    { session: options?.session, ordered: true }
   );
 }
 

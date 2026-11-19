@@ -85,8 +85,9 @@ describe("Organization profile and settings", () => {
       expect(organization.settings).toEqual({
         currency: "BHD",
         timezone: "Asia/Bahrain",
+        fiscalYearStartMonth: 1,
         inventory: { allowNegativeStock: false },
-        sales: { pricesIncludeTax: true },
+        sales: { pricesIncludeTax: true, paymentMethods: ["cash", "card", "wallet", "bank_transfer"], cashRounding: null, maxDiscountPercent: null },
       });
       expect(organization.currency).toEqual({ code: "BHD", name: "Bahraini Dinar", decimals: 3 });
       expect(organization.country).toEqual({ code: "BH", name: "Bahrain" });
@@ -153,8 +154,9 @@ describe("Organization profile and settings", () => {
       expect(res.body.data.organization.settings).toEqual({
         currency: "BHD",
         timezone: "Asia/Dubai",
+        fiscalYearStartMonth: 1,
         inventory: { allowNegativeStock: true },
-        sales: { pricesIncludeTax: true },
+        sales: { pricesIncludeTax: true, paymentMethods: ["cash", "card", "wallet", "bank_transfer"], cashRounding: null, maxDiscountPercent: null },
       });
     });
 
@@ -164,14 +166,14 @@ describe("Organization profile and settings", () => {
         .set(auth(admin))
         .send({ settings: { sales: { pricesIncludeTax: false } } });
       expect(off.status).toBe(200);
-      expect(off.body.data.organization.settings.sales).toEqual({ pricesIncludeTax: false });
+      expect(off.body.data.organization.settings.sales.pricesIncludeTax).toBe(false);
       expect(off.body.data.organization.settings.inventory).toEqual({ allowNegativeStock: false });
 
       const on = await request
         .patch(BASE)
         .set(auth(admin))
         .send({ settings: { sales: { pricesIncludeTax: true } } });
-      expect(on.body.data.organization.settings.sales).toEqual({ pricesIncludeTax: true });
+      expect(on.body.data.organization.settings.sales.pricesIncludeTax).toBe(true);
 
       await request
         .patch(BASE)
@@ -331,7 +333,7 @@ describe("settings.sales.pricesIncludeTax defaults and isolation", () => {
   it("is stored as true by the mongoose default when an organization is created", async () => {
     const { org } = await createOrg("defaults");
     const raw = await Organization.collection.findOne({ _id: org._id as never });
-    expect(raw!.settings.sales).toEqual({ pricesIncludeTax: true });
+    expect(raw!.settings.sales.pricesIncludeTax).toBe(true);
   });
 
   it("a legacy organization without settings.sales reads as true and can still be switched", async () => {
@@ -343,18 +345,18 @@ describe("settings.sales.pricesIncludeTax defaults and isolation", () => {
 
     const before = await request.get(BASE).set(auth(admin));
     expect(before.status).toBe(200);
-    expect(before.body.data.organization.settings.sales).toEqual({ pricesIncludeTax: true });
+    expect(before.body.data.organization.settings.sales.pricesIncludeTax).toBe(true);
 
     // An unrelated update must not materialise or flip the setting
     await request.patch(BASE).set(auth(admin)).send({ legalName: "Legacy Co" }).expect(200);
     const after = await request.get(BASE).set(auth(admin));
-    expect(after.body.data.organization.settings.sales).toEqual({ pricesIncludeTax: true });
+    expect(after.body.data.organization.settings.sales.pricesIncludeTax).toBe(true);
 
     const off = await request.patch(BASE).set(auth(admin)).send({ settings: { sales: { pricesIncludeTax: false } } });
     expect(off.status).toBe(200);
-    expect(off.body.data.organization.settings.sales).toEqual({ pricesIncludeTax: false });
+    expect(off.body.data.organization.settings.sales.pricesIncludeTax).toBe(false);
     const persisted = await Organization.collection.findOne({ _id: org._id as never });
-    expect(persisted!.settings.sales).toEqual({ pricesIncludeTax: false });
+    expect(persisted!.settings.sales.pricesIncludeTax).toBe(false);
   });
 
   it("changing it for one organization never affects another", async () => {
@@ -366,7 +368,7 @@ describe("settings.sales.pricesIncludeTax defaults and isolation", () => {
     await request.patch(BASE).set(auth(adminA)).send({ settings: { sales: { pricesIncludeTax: false } } }).expect(200);
 
     const resB = await request.get(BASE).set(auth(adminB));
-    expect(resB.body.data.organization.settings.sales).toEqual({ pricesIncludeTax: true });
+    expect(resB.body.data.organization.settings.sales.pricesIncludeTax).toBe(true);
     // organizationId in the body is not an accepted field and cannot redirect the write
     await request
       .patch(BASE)
@@ -374,7 +376,7 @@ describe("settings.sales.pricesIncludeTax defaults and isolation", () => {
       .send({ organizationId: String(b.org._id), settings: { sales: { pricesIncludeTax: false } } })
       .expect(400);
     const rawB = await Organization.collection.findOne({ _id: b.org._id as never });
-    expect(rawB!.settings.sales).toEqual({ pricesIncludeTax: true });
+    expect(rawB!.settings.sales.pricesIncludeTax).toBe(true);
   });
 
   it("is not changeable by a cashier", async () => {
@@ -386,6 +388,6 @@ describe("settings.sales.pricesIncludeTax defaults and isolation", () => {
     const res = await request.patch(BASE).set(auth(cashier)).send({ settings: { sales: { pricesIncludeTax: false } } });
     expect(res.status).toBe(403);
     const raw = await Organization.collection.findOne({ _id: org._id as never });
-    expect(raw!.settings.sales).toEqual({ pricesIncludeTax: true });
+    expect(raw!.settings.sales.pricesIncludeTax).toBe(true);
   });
 });

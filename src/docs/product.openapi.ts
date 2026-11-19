@@ -28,7 +28,7 @@ const variantParams = productIdParam.extend({
 });
 
 const PHASE_4A1_PRODUCT_NOTE =
-  "**Phase 4a-1 (contract preview: refused with 400 until implemented):** `nameAr` (Arabic name, printed on Saudi receipts when set) and `hsnOrSac` (goods: a 4, 6 or 8-digit HSN code not starting with 99; services: a 6-digit SAC starting with 99). Both are optional in every country and copied onto each sale line; null clears them.";
+  "**Receipt fields (Phase 4a-1):** `nameAr` (Arabic name, printed on Saudi receipts when set) and `hsnOrSac` (goods: a 4, 6 or 8-digit HSN code not starting with 99; services: a 6-digit SAC starting with 99). Both are optional in every country and copied onto each sale line; null clears them. On update, `hsnOrSac` is checked against the product's stored type (400 on `hsnOrSac`).";
 
 const CONTRACT = [
   "**Rules**",

@@ -66,4 +66,14 @@ export class ApiError extends Error {
     Error.captureStackTrace(error, ApiError.coded);
     return error;
   }
+
+  /** A 400 VALIDATION_FAILED on one field, shaped like the request validator's errors. */
+  static invalidField(field: string, message: string): ApiError {
+    return ApiError.coded(
+      400,
+      "VALIDATION_FAILED",
+      `Request Validation Failed: ${field}: ${message}`,
+      [{ field, code: "VALIDATION_FAILED", message }]
+    );
+  }
 }

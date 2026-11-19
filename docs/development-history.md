@@ -2072,7 +2072,7 @@ The user chose these 14 decisions:
 7. **Rounding and discounts:** VAT is rounded per line and then summed. A cart discount is split
    across lines pro rata before VAT. Cash rounding (an org setting) applies to the cash tender only.
 8. **Pricing:** one org-wide variant price, plus a price override that needs a permission.
-9. **Payment methods:** a fixed set (cash, card, upi, bank_transfer) with an optional reference.
+9. **Payment methods:** a fixed set (cash, card, wallet, bank_transfer) with an optional reference. (Was `upi`; renamed to `wallet` on 2026-11-19, see the 4a-1 implementation.)
 10. **Sale returns:** receipt required, same store, refund to the original tender.
 11. **ZATCA Phase 1:** the QR code on Saudi receipts is built in 4c. Phase 2 integration comes later.
 12. **Arabic names:** optional `nameAr` on products and `legalNameAr` on the organization and stores.
@@ -2131,3 +2131,112 @@ Testing:
 - `tests/unit/phase4a1Validator.test.ts` (15): tax IDs, store, organization and product rules, and
   the currency and country config.
 - `tests/integration/phase4a1Contract.test.ts` (5): preview refusals and the OpenAPI document.
+
+### Frontend review of the Phase 4 needs (2026-11-19)
+
+The frontend developer sent their Phase 4 wish-list
+(`SynkSale-Phase4-Frontend-Needs-19-Nov-2026.pdf`). After a tech-lead review, the user accepted:
+- **A.** `upi` becomes `wallet`: any digital wallet or instant payment (UPI in India, BenefitPay,
+  STC Pay). The till labels it per country. Done in the 4a-1 implementation, before any sale exists.
+- **B.** Shift breaks (lunch, prayer, short, personal) go into 4b. A shift on break cannot sell.
+- **C.** Blind close: the cashier sees expected cash only after submitting the count, unless they
+  hold a permission.
+- **D.** Store cash settings (`tolerance`, `drawerLimit`, `payOutLimit`) are stored on the store, in
+  4b, under `store:configure`.
+- **E.** Loyalty stays deferred: customers get no `loyaltyPoints`.
+
+Corrections for the later contracts:
+- **4c, sales:**
+  - `invoiceType` is `full | simplified | plain` and is stored on the sale.
+  - The sale `discount` is an amount.
+  - `registerId` comes from the shift.
+  - Extra errors: no invoice prefix, shift on break, shift/register mismatch, and an out-of-state
+    GSTIN on a full invoice.
+  - The server's `zatcaQr` is the only QR code printed.
+- **4a-2, customers and registers:**
+  - Phone lookup is exact match plus "starts with", with at least 4 digits and at most 4 results.
+  - Any till user can list registers.
+- **4b, shifts:**
+  - Opening float and drawer limits are per register.
+  - `/cash-sessions` is the filtered shift list, not a separate resource.
+- **4d, history:** transaction history filters by `variantId`.
+- **4e, reports:** the daily report uses the store's timezone.
+- **Purchasing (approved):**
+  - `GET /goods-receipts?billable=true`, through an indexed counter on the receipt.
+  - `onOrder` on store stock.
+
+### 4a-1 implementation (2026-11-19)
+
+The contract fields are now stored. `refuseUntilImplemented` has no callers left; it stays for the
+next contract PR.
+
+- **Stores** (`store.service.ts`):
+  - Every response, the list included, goes through `storeView()`: all 4a-1 fields are present
+    (null when unset), plus `effective`.
+  - `effective.legalName` falls back to the organization's legal name, then its name, so a receipt
+    always has one.
+  - `assertTaxIdentity()` checks country, state code and TRN together on create, and on an update
+    that touches any of them:
+    - an Indian store needs a `stateCode` (an older one without it gets a 400 on its next update);
+    - other stores must not have one;
+    - the store's own TRN must fit its stored country;
+    - an Indian GSTIN must start with the store's state code;
+    - an Indian store using the organization's GSTIN must be in that GSTIN's state.
+  - `invoicePrefix` is unique through a partial unique index, `{organizationId, invoicePrefix}`
+    where it is a string (409 `INVOICE_PREFIX_TAKEN`, also on a lost race). Once the store has a
+    sale number it is fixed (409 `INVOICE_PREFIX_LOCKED`).
+- **Organization** (`organization.service.ts`):
+  - `salesSettings()` fills in the country defaults for organizations created before 4a-1.
+  - The profile always has `legalNameAr`, `fiscalYearStartMonth`, `paymentMethods` (stored in the
+    fixed order cash, card, wallet, bank_transfer), `cashRounding`, `maxDiscountPercent` and
+    `cashRoundingSteps`.
+  - `cashRounding` must equal a step from the currency's list, and is stored in that list's
+    spelling (`0.1` becomes `0.100`).
+  - The TRN is checked against the currency's country. In India it is refused while a store in
+    another state has no GSTIN of its own.
+  - `FISCAL_YEAR_LOCKED` applies once any sale number exists.
+  - A currency change (only possible before any product exists) resets the fiscal year to the new
+    country's, unless one is sent, and clears a rounding step the new currency does not allow. The
+    currency checks run first, so `CURRENCY_LOCKED` still wins.
+- **Signup:** stores the country's fiscal year and payment methods (all four everywhere). It seeds
+  the country's tax rates from `CountryDefinition.defaultTaxRates`, which replaced
+  `standardTaxRate`: India gets GST 18% (default) and 5%, each as CGST and SGST halves.
+- **Products:** `nameAr` and `hsnOrSac` are stored and returned. On update, `hsnOrSac` is checked
+  against the stored type, which cannot change.
+- **Counters** (`documentNumber.service.ts`):
+  - `nextDocumentNumber({organizationId, type, storeId?, fiscalYear?}, session)` replaces the six
+    inline `$inc` calls.
+  - `DocumentCounter` has `storeId` and `fiscalYear` (null for organization-wide series), new
+    types `sale_invoice` and `sale_credit_note`, and the unique index
+    `{organizationId, type, storeId, fiscalYear}`. Older counters read as null and keep counting.
+    `sync:indexes` drops the old index.
+  - `hasSaleNumbers()` backs both locks.
+  - `fiscalYearOf()` (using the store's local date) and `formatSaleNumber()` are ready for 4c.
+- **Migration:** `npm run migrate:phase4a1`, now part of `npm run migrate`.
+  - It stores the fiscal year and payment method defaults on older organizations.
+  - It gives Indian stores a `stateCode`, taken in this order:
+    1. the store's own GSTIN;
+    2. a match of `address.state` against a GST state name;
+    3. the organization's GSTIN.
+  - Stores it cannot resolve are printed, so someone can set them by hand.
+- **Naming:** the sale payment methods constant is now `SALE_PAYMENT_METHODS`, so it no longer
+  shares a name with the vendor payment `PAYMENT_METHODS` in `bill.validator.ts`.
+
+Testing:
+- `tests/integration/phase4a1.test.ts` (20), replacing the contract test. It covers:
+  - store identity and `effective`;
+  - prefix uniqueness, the race and the lock;
+  - India state and GSTIN rules;
+  - organization settings, rounding, TRN, the fiscal lock and a currency change;
+  - product HSN/SAC;
+  - per-store and per-year counters, and an older counter carrying on;
+  - the migration;
+  - OpenAPI fields marked required.
+- `tests/unit/phase4a1Validator.test.ts` (18): adds fiscal year boundaries in the store's
+  timezone, the number format and length, and the GST/VAT seed lists.
+- Updated to the new shapes:
+  - the organization profile tests;
+  - the signup seeding test (India's GST rates and defaults);
+  - the Indian store fixture in `store.test.ts`, which now has `stateCode`.
+
+1448 tests pass.

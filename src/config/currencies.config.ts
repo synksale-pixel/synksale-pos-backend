@@ -18,22 +18,43 @@ export interface CurrencyDefinition {
   cashRoundingSteps: string[];
 }
 
+export interface SeedTaxRate {
+  name: string;
+  components: { name: string; rate: number }[];
+}
+
+/**
+ * Ways a sale can be paid at the till. A fixed set: no card-terminal or wallet integration in v1.
+ * `wallet` is any digital wallet or instant payment (UPI in India, BenefitPay, STC Pay...); the
+ * till labels it per country. Not the vendor payment methods, which live in bill.validator.
+ */
+export const SALE_PAYMENT_METHODS = ["cash", "card", "wallet", "bank_transfer"] as const;
+export type SalePaymentMethod = (typeof SALE_PAYMENT_METHODS)[number];
+
 export interface CountryDefinition {
   code: string;
   name: string;
   currency: string;
-  /** Standard VAT/GST rate seeded as the organization's default tax rate. Null = no VAT. */
-  standardTaxRate: { name: string; rate: number } | null;
+  /** Tax rates seeded for a new organization; the first becomes its default. Empty = no VAT. */
+  defaultTaxRates: SeedTaxRate[];
   /** First month (1-12) of the fiscal year: receipt numbers restart then. India April, else January. */
   fiscalYearStartMonth: number;
   /** Payment methods enabled for a new organization in this country (cash is always enabled). */
-  defaultPaymentMethods: PaymentMethod[];
+  defaultPaymentMethods: SalePaymentMethod[];
 }
 
-/** Ways a sale can be paid at the till. A fixed set: no card-terminal or wallet integration in v1. */
-export const PAYMENT_METHODS = ["cash", "card", "upi", "bank_transfer"] as const;
-export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
-const GCC_PAYMENTS: PaymentMethod[] = ["cash", "card", "bank_transfer"];
+const ALL_PAYMENTS: SalePaymentMethod[] = [...SALE_PAYMENT_METHODS];
+
+const vat = (rate: number): SeedTaxRate[] => [{ name: `VAT ${rate}%`, components: [{ name: "VAT", rate }] }];
+
+/** GST split equally into CGST + SGST: till sales are always intra-state in v1. */
+const gst = (rate: number): SeedTaxRate => ({
+  name: `GST ${rate}%`,
+  components: [
+    { name: "CGST", rate: rate / 2 },
+    { name: "SGST", rate: rate / 2 },
+  ],
+});
 
 export const CURRENCIES: Record<string, CurrencyDefinition> = {
   BHD: { code: "BHD", name: "Bahraini Dinar", decimals: 3, cashRoundingSteps: ["0.005", "0.010", "0.050", "0.100"] },
@@ -46,15 +67,13 @@ export const CURRENCIES: Record<string, CurrencyDefinition> = {
 };
 
 export const COUNTRIES: Record<string, CountryDefinition> = {
-  BH: { code: "BH", name: "Bahrain", currency: "BHD", standardTaxRate: { name: "VAT", rate: 10 }, fiscalYearStartMonth: 1, defaultPaymentMethods: GCC_PAYMENTS },
-  KW: { code: "KW", name: "Kuwait", currency: "KWD", standardTaxRate: null, fiscalYearStartMonth: 1, defaultPaymentMethods: GCC_PAYMENTS },
-  OM: { code: "OM", name: "Oman", currency: "OMR", standardTaxRate: { name: "VAT", rate: 5 }, fiscalYearStartMonth: 1, defaultPaymentMethods: GCC_PAYMENTS },
-  AE: { code: "AE", name: "United Arab Emirates", currency: "AED", standardTaxRate: { name: "VAT", rate: 5 }, fiscalYearStartMonth: 1, defaultPaymentMethods: GCC_PAYMENTS },
-  QA: { code: "QA", name: "Qatar", currency: "QAR", standardTaxRate: null, fiscalYearStartMonth: 1, defaultPaymentMethods: GCC_PAYMENTS },
-  SA: { code: "SA", name: "Saudi Arabia", currency: "SAR", standardTaxRate: { name: "VAT", rate: 15 }, fiscalYearStartMonth: 1, defaultPaymentMethods: GCC_PAYMENTS },
-  // GST is split into components (CGST + SGST): the 4a-1 implementation seeds "GST 18%" (default)
-  // and "GST 5%" with two equal components; until then nothing is seeded.
-  IN: { code: "IN", name: "India", currency: "INR", standardTaxRate: null, fiscalYearStartMonth: 4, defaultPaymentMethods: ["cash", "card", "upi", "bank_transfer"] },
+  BH: { code: "BH", name: "Bahrain", currency: "BHD", defaultTaxRates: vat(10), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  KW: { code: "KW", name: "Kuwait", currency: "KWD", defaultTaxRates: [], fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  OM: { code: "OM", name: "Oman", currency: "OMR", defaultTaxRates: vat(5), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  AE: { code: "AE", name: "United Arab Emirates", currency: "AED", defaultTaxRates: vat(5), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  QA: { code: "QA", name: "Qatar", currency: "QAR", defaultTaxRates: [], fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  SA: { code: "SA", name: "Saudi Arabia", currency: "SAR", defaultTaxRates: vat(15), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  IN: { code: "IN", name: "India", currency: "INR", defaultTaxRates: [gst(18), gst(5)], fiscalYearStartMonth: 4, defaultPaymentMethods: ALL_PAYMENTS },
 };
 
 export const DEFAULT_CURRENCY = "BHD";
@@ -73,4 +92,13 @@ export function getCurrency(code: string): CurrencyDefinition {
 /** The country whose currency is `currencyCode` (one-to-one in v1). */
 export function getCountryForCurrency(currencyCode: string): CountryDefinition | undefined {
   return Object.values(COUNTRIES).find((country) => country.currency === currencyCode);
+}
+
+/** The sales defaults a new organization gets from its currency's country. */
+export function countrySalesDefaults(currencyCode: string) {
+  const country = getCountryForCurrency(currencyCode);
+  return {
+    fiscalYearStartMonth: country?.fiscalYearStartMonth ?? 1,
+    paymentMethods: [...(country?.defaultPaymentMethods ?? ["cash"])] as SalePaymentMethod[],
+  };
 }

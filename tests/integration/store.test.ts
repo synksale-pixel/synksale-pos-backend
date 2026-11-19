@@ -27,6 +27,7 @@ const validStore = {
     state: "Karnataka",
     country: "India",
     postalCode: "560001",
+    stateCode: "29",
   },
   countryCode: "IN",
   timezone: "Asia/Kolkata",

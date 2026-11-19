@@ -6,7 +6,12 @@
  */
 
 import mongoose, { Schema, Document } from "mongoose";
-import { CURRENCY_CODES, DEFAULT_CURRENCY } from "../config/currencies.config";
+import {
+  CURRENCY_CODES,
+  DEFAULT_CURRENCY,
+  SALE_PAYMENT_METHODS,
+  SalePaymentMethod,
+} from "../config/currencies.config";
 
 export interface IOrganization {
   name: string;
@@ -24,12 +29,19 @@ export interface IOrganization {
   rejectionReason: string | null;
   /** Registered legal name printed on documents; falls back to `name` when null. */
   legalName: string | null;
+  /** Arabic legal name for Saudi receipts and the ZATCA QR code. */
+  legalNameAr?: string | null;
   /** VAT Tax Registration Number (TRN). Null when the business is not VAT-registered. */
   taxRegistrationNumber: string | null;
   settings: {
     /** ISO 4217 code. Fixed per organization: every store must be in a country that uses it. */
     currency: string;
     timezone: string;
+    /**
+     * First month (1-12) of the fiscal year; sale numbers restart then. Absent on organizations
+     * created before Phase 4a-1: read through salesSettings(), which falls back to the country's.
+     */
+    fiscalYearStartMonth?: number;
     inventory: {
       /** When false (default), a sale or adjustment can never take stock below zero. */
       allowNegativeStock: boolean;
@@ -37,6 +49,12 @@ export interface IOrganization {
     sales: {
       /** When true (default), selling prices are entered VAT-inclusive and VAT is backed out. */
       pricesIncludeTax: boolean;
+      /** Methods the till offers, always including cash. Absent before 4a-1 (country default). */
+      paymentMethods?: SalePaymentMethod[];
+      /** Cash tender rounding step as a decimal string from the currency's list; null = off. */
+      cashRounding?: string | null;
+      /** Discount cap (percent) for sale:discount; null = no cap. */
+      maxDiscountPercent?: number | null;
     };
   };
   createdAt?: Date;
@@ -134,6 +152,11 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
       trim: true,
       default: null,
     },
+    legalNameAr: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     taxRegistrationNumber: {
       type: String,
       trim: true,
@@ -150,6 +173,8 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
         type: String,
         required: [true, "Default timezone is required"],
       },
+      // No schema default: an absent value means "the country's default" (see salesSettings()).
+      fiscalYearStartMonth: { type: Number, min: 1, max: 12 },
       inventory: {
         allowNegativeStock: {
           type: Boolean,
@@ -161,6 +186,12 @@ const organizationSchema = new Schema<IOrganization, OrganizationModel>(
           type: Boolean,
           default: true,
         },
+        paymentMethods: {
+          type: [{ type: String, enum: SALE_PAYMENT_METHODS }],
+          default: undefined,
+        },
+        cashRounding: { type: String, default: null },
+        maxDiscountPercent: { type: Number, min: 0, max: 100, default: null },
       },
     },
   },

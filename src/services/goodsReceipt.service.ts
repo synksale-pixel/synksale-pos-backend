@@ -18,7 +18,7 @@
 import mongoose from "mongoose";
 import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine, billableMilli } from "../models/goodsReceipt.model";
 import { PurchaseOrder, PurchaseOrderDocument, IPurchaseOrderLine, IPurchaseOrderVendorSnapshot } from "../models/purchaseOrder.model";
-import { DocumentCounter } from "../models/documentCounter.model";
+import { nextDocumentNumber } from "./documentNumber.service";
 import { Vendor, VendorDocument } from "../models/vendor.model";
 import { Product, ProductDocument } from "../models/product.model";
 import { ProductVariant, ProductVariantDocument, variantDisplayName } from "../models/productVariant.model";
@@ -598,12 +598,7 @@ export async function createGoodsReceipt(
   const orgId = oid(organizationId);
   const store = oid(storeId);
   const actor = oid(actorUserId);
-  const counter = await DocumentCounter.findOneAndUpdate(
-    { organizationId: orgId, type: "goods_receipt" },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, session }
-  );
-  const sequence = counter!.seq;
+  const sequence = await nextDocumentNumber({ organizationId: orgId, type: "goods_receipt" }, session);
   const number = `GRN-${String(sequence).padStart(5, "0")}`;
   const receiptId = new mongoose.Types.ObjectId();
   const at = new Date();

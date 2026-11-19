@@ -7,6 +7,7 @@
 
 import "../../config/openapi.registry"; // must load first: enables .openapi() on Zod
 import { z } from "zod";
+import { SALE_PAYMENT_METHODS } from "../../config/currencies.config";
 
 // ---------- Envelopes ----------
 
@@ -191,8 +192,8 @@ export const OrganizationProfileSchema = z
     name: z.string().openapi({ example: "Al Noor Trading" }),
     slug: z.string().openapi({ example: "al-noor-trading" }),
     legalName: z.string().nullable().openapi({ example: "Al Noor Trading W.L.L." }),
-    legalNameAr: z.string().nullable().optional().openapi({
-      description: "Arabic legal name (Saudi receipts, ZATCA QR). (Phase 4a-1 preview: absent until implemented.)",
+    legalNameAr: z.string().nullable().openapi({
+      description: "Arabic legal name (Saudi receipts, ZATCA QR).",
       example: "شركة النور للتجارة",
     }),
     taxRegistrationNumber: z.string().nullable().openapi({ example: "220000123400002" }),
@@ -201,8 +202,8 @@ export const OrganizationProfileSchema = z
     settings: z.object({
       currency: z.string().openapi({ example: "BHD" }),
       timezone: z.string().openapi({ example: "Asia/Bahrain" }),
-      fiscalYearStartMonth: z.number().int().optional().openapi({
-        description: "First month of the fiscal year (receipt numbers restart). (Phase 4a-1 preview: absent until implemented.)",
+      fiscalYearStartMonth: z.number().int().openapi({
+        description: "First month of the fiscal year (receipt numbers restart).",
         example: 1,
       }),
       inventory: z.object({
@@ -213,23 +214,22 @@ export const OrganizationProfileSchema = z
           description: "Selling prices are VAT-inclusive (default true). Cost prices are always VAT-exclusive.",
           example: true,
         }),
-        // ---- Phase 4a-1 (contract preview: optional until implemented, then always present) ----
-        paymentMethods: z.array(z.enum(["cash", "card", "upi", "bank_transfer"])).optional().openapi({
-          description: "Payment methods the till offers; always includes cash.",
+        paymentMethods: z.array(z.enum(SALE_PAYMENT_METHODS)).openapi({
+          description: "Payment methods the till offers, always including cash. wallet = any digital wallet or instant payment (label it UPI in India).",
           example: ["cash", "card", "bank_transfer"],
         }),
-        cashRounding: z.string().nullable().optional().openapi({
+        cashRounding: z.string().nullable().openapi({
           description: "Cash rounding step as a decimal string, or null when off.",
           example: "0.25",
         }),
-        maxDiscountPercent: z.number().nullable().optional().openapi({
+        maxDiscountPercent: z.number().nullable().openapi({
           description: "Discount cap for sale:discount, or null for no cap.",
           example: 10,
         }),
       }),
     }),
-    cashRoundingSteps: z.array(z.string()).optional().openapi({
-      description: "The cash rounding steps allowed for this currency, for the settings form. (Phase 4a-1 preview: absent until implemented.)",
+    cashRoundingSteps: z.array(z.string()).openapi({
+      description: "The cash rounding steps allowed for this currency, for the settings form.",
       example: ["0.25"],
     }),
     currency: z
@@ -409,8 +409,8 @@ export const StoreSchema = z
       state: z.string().openapi({ example: "Karnataka" }),
       country: z.string().openapi({ example: "India" }),
       postalCode: z.string().openapi({ example: "560038" }),
-      stateCode: z.string().nullable().optional().openapi({
-        description: "India only: two-digit GST state code (place of supply). null elsewhere. (Phase 4a-1 preview: absent until implemented.)",
+      stateCode: z.string().nullable().openapi({
+        description: "India only: two-digit GST state code (place of supply). null elsewhere.",
         example: "29",
       }),
     }),
@@ -420,10 +420,10 @@ export const StoreSchema = z
       example: "IN",
     }),
     timezone: z.string().openapi({ example: "Asia/Kolkata" }),
-    // ---- Phase 4a-1 (contract preview: optional until implemented, then always present) ----
-    legalName: z.string().nullable().optional().openapi({ description: "This store's own legal name, or null.", example: null as unknown as string }),
-    legalNameAr: z.string().nullable().optional().openapi({ description: "This store's own Arabic legal name, or null.", example: null as unknown as string }),
-    taxRegistrationNumber: z.string().nullable().optional().openapi({
+    // ---- Receipt identity (Phase 4a-1) ----
+    legalName: z.string().nullable().openapi({ description: "This store's own legal name, or null.", example: null as unknown as string }),
+    legalNameAr: z.string().nullable().openapi({ description: "This store's own Arabic legal name, or null.", example: null as unknown as string }),
+    taxRegistrationNumber: z.string().nullable().openapi({
       description: "This store's own TRN / GSTIN, or null when it uses the organization's.",
       example: "29ABCDE1234F1ZW",
     }),
@@ -436,11 +436,13 @@ export const StoreSchema = z
           example: "29ABCDE1234F1ZW",
         }),
       })
-      .optional()
-      .openapi({ description: "What the till prints: the store's own value, else the organization's. The till never resolves these itself." }),
-    phone: z.string().nullable().optional().openapi({ example: "+91 80 4000 0000" }),
-    email: z.string().nullable().optional().openapi({ example: "indiranagar@sharmastore.in" }),
-    invoicePrefix: z.string().nullable().optional().openapi({
+      .openapi({
+        description:
+          "What the till prints: the store's own value, else the organization's (legalName falls back to the organization's name). The till never resolves these itself.",
+      }),
+    phone: z.string().nullable().openapi({ example: "+91 80 4000 0000" }),
+    email: z.string().nullable().openapi({ example: "indiranagar@sharmastore.in" }),
+    invoicePrefix: z.string().nullable().openapi({
       description: "Starts sale invoice and credit note numbers ({prefix}-{YY}-000123 / {prefix}-{YY}-R000045). null until set; required before the first sale.",
       example: "BLR1",
     }),
@@ -448,8 +450,7 @@ export const StoreSchema = z
       .object({
         headerText: z.string().nullable().openapi({ example: "Welcome to Sharma Store" }),
         footerText: z.string().nullable().openapi({ example: "Exchange within 7 days with this receipt." }),
-      })
-      .optional(),
+      }),
     isActive: z.boolean().openapi({ example: true }),
     isDelete: z.boolean().openapi({ example: false }),
     createdAt: isoDate("2026-05-01T09:30:00.000Z"),
@@ -671,12 +672,12 @@ export const ProductSchema = z
   .object({
     ...productCore,
     organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
-    nameAr: z.string().nullable().optional().openapi({
-      description: "Arabic name for Saudi receipts, or null. (Phase 4a-1 preview: absent until implemented.)",
+    nameAr: z.string().nullable().openapi({
+      description: "Arabic name for Saudi receipts, or null.",
       example: null as unknown as string,
     }),
-    hsnOrSac: z.string().nullable().optional().openapi({
-      description: "HSN (goods) or SAC (services) code, or null. (Phase 4a-1 preview: absent until implemented.)",
+    hsnOrSac: z.string().nullable().openapi({
+      description: "HSN (goods) or SAC (services) code, or null.",
       example: "61091000",
     }),
     brand: z.string().nullable().openapi({ example: "Al Noor" }),
