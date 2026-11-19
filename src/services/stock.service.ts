@@ -23,6 +23,8 @@ import { StockLevel } from "../models/stockLevel.model";
 import { StockMovement, StockMovementDocument } from "../models/stockMovement.model";
 import { StockAdjustment, StockAdjustmentDocument, IStockAdjustmentLine } from "../models/stockAdjustment.model";
 import { StockTransfer, StockTransferDocument, IStockTransferLine } from "../models/stockTransfer.model";
+import { PurchaseOrder } from "../models/purchaseOrder.model";
+import { ON_ORDER_PURCHASE_ORDER_STATUSES } from "../validators/purchaseOrder.validator";
 import { ApiError, ApiErrorDetail } from "../utils/ApiError";
 import { formatMoney, parseMoney } from "../utils/money";
 import { fromMilli, toMilli } from "../utils/quantity";
@@ -703,6 +705,40 @@ interface StockRow {
 }
 
 /**
+ * What is still expected from vendors, per variant and store (key "variantId:storeId", in
+ * thousandths): ordered minus received on the lines of issued and partially received POs. A line
+ * received in full (or over) adds nothing. Drafts, received, closed and cancelled POs never count.
+ */
+export async function onOrderByVariantAndStore(
+  organizationId: string,
+  variantIds: ObjectId[],
+  storeIds: ObjectId[]
+): Promise<Map<string, number>> {
+  if (variantIds.length === 0 || storeIds.length === 0) return new Map();
+  const rows = await PurchaseOrder.aggregate<{ _id: { variantId: ObjectId; storeId: ObjectId }; milli: number }>([
+    {
+      $match: {
+        organizationId: oid(organizationId),
+        storeId: { $in: storeIds },
+        status: { $in: ON_ORDER_PURCHASE_ORDER_STATUSES },
+        "lines.variantId": { $in: variantIds },
+      },
+    },
+    { $unwind: "$lines" },
+    { $match: { "lines.variantId": { $in: variantIds } } },
+    {
+      $group: {
+        _id: { variantId: "$lines.variantId", storeId: "$storeId" },
+        milli: {
+          $sum: { $max: [0, { $subtract: ["$lines.quantityMilli", { $ifNull: ["$lines.receivedQuantityMilli", 0] }] }] },
+        },
+      },
+    },
+  ]);
+  return new Map(rows.map((row) => [`${row._id.variantId}:${row._id.storeId}`, row.milli]));
+}
+
+/**
  * Every variant of every goods product that tracks inventory, with its stock in this store
  * (0 when it never had any). Driven from the catalog so never-stocked variants are listed.
  */
@@ -790,10 +826,13 @@ export async function listStoreStock(organizationId: string, storeId: string, qu
   const [result] = await ProductVariant.aggregate<{ items: StockRow[]; total: { count: number }[] }>(pipeline);
   const rows = result?.items ?? [];
   const total = result?.total[0]?.count ?? 0;
-  const categories = await categoryRefs(
-    organizationId,
-    rows.map((row) => row.product.categoryId).filter((id): id is ObjectId => Boolean(id))
-  );
+  const [categories, onOrder] = await Promise.all([
+    categoryRefs(
+      organizationId,
+      rows.map((row) => row.product.categoryId).filter((id): id is ObjectId => Boolean(id))
+    ),
+    onOrderByVariantAndStore(organizationId, rows.map((row) => row._id), [oid(storeId)]),
+  ]);
 
   return {
     store,
@@ -815,6 +854,7 @@ export async function listStoreStock(organizationId: string, storeId: string, qu
           category: row.product.categoryId ? (categories.get(row.product.categoryId.toString()) ?? null) : null,
         },
         quantity: fromMilli(quantityMilli),
+        onOrder: fromMilli(onOrder.get(`${row._id}:${oid(storeId)}`) ?? 0),
         reorderPoint: row.reorderPoint ?? null,
         isLow: row.reorderPoint !== null && row.reorderPoint !== undefined && quantityMilli <= toMilli(row.reorderPoint),
         averageCost: showCost && level?.avgCostMinor != null ? formatMoney(level.avgCostMinor, settings.decimals) : null,
@@ -853,6 +893,11 @@ export async function getProductStock(organizationId: string, productId: string,
     storeId: { $in: stores.map((store) => store._id) },
   });
   const levelOf = new Map(levels.map((level) => [`${level.variantId}:${level.storeId}`, level]));
+  const onOrder = await onOrderByVariantAndStore(
+    organizationId,
+    variants.map((variant) => variant._id),
+    stores.map((store) => store._id)
+  );
   const canSeeCost = (storeId: ObjectId) => costStores === "all" || costStores.has(storeId.toString());
 
   return {
@@ -864,6 +909,7 @@ export async function getProductStock(organizationId: string, productId: string,
         return {
           store: { id: store._id, name: store.name, code: store.code },
           quantity: fromMilli(level?.quantityMilli ?? 0),
+          onOrder: fromMilli(onOrder.get(`${variant._id}:${store._id}`) ?? 0),
           averageCost: showCost && level?.avgCostMinor != null ? formatMoney(level.avgCostMinor, settings.decimals) : null,
           stockValue: showCost ? formatMoney(level?.valueMinor ?? 0, settings.decimals) : null,
           quantityMilli: level?.quantityMilli ?? 0,

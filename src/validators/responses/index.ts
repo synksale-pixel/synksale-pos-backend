@@ -790,6 +790,9 @@ const REASON_LIST =
 const COST_HIDDEN = "null when the caller lacks `inventory:read`.";
 
 /** One variant's stock in one store. */
+const ON_ORDER =
+  "Still expected from vendors for this store: ordered minus received on issued and partially received purchase orders (drafts do not count). 0 when nothing is on order.";
+
 export const StockLevelSchema = z
   .object({
     variant: StockVariantRefSchema.extend({ isActive: z.boolean().openapi({ example: true }) }),
@@ -804,6 +807,7 @@ export const StockLevelSchema = z
         .nullable(),
     }),
     quantity: quantity(18, "On hand in this store. Negative only when the organization allows negative stock."),
+    onOrder: quantity(24, ON_ORDER),
     reorderPoint: z.number().nullable().openapi({ example: 10 }),
     isLow: z.boolean().openapi({ description: "true when a reorder point is set and quantity is at or below it.", example: false }),
     averageCost: money(
@@ -839,6 +843,7 @@ export const ProductStockDataSchema = z
             z.object({
               store: StockStoreRefSchema,
               quantity: quantity(18),
+              onOrder: quantity(24, ON_ORDER),
               averageCost: money("1.600", `null until stock is received here, and ${COST_HIDDEN}`).nullable(),
               stockValue: money("28.800", COST_HIDDEN).nullable(),
             })
@@ -1197,6 +1202,10 @@ export const GoodsReceiptSummarySchema = z
   .object({
     ...goodsReceiptCore,
     lineCount: z.number().int().openapi({ example: 2 }),
+    billable: z.boolean().openapi({
+      description: "true while any line has goods left to bill (`billableQuantity` above 0 on the detail). Filter with `?billable=true`.",
+      example: true,
+    }),
   })
   .openapi("GoodsReceiptSummary");
 

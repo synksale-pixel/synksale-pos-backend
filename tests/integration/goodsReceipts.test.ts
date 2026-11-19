@@ -681,3 +681,71 @@ describe("read and list", () => {
     expect(res.body.data.goodsReceipts.map((grn: { number: string }) => grn.number)).toEqual(["GRN-00002"]);
   });
 });
+
+// ==========================================
+// On order (stock lists)
+// ==========================================
+
+describe("onOrder on store and product stock", () => {
+  const storeStock = async (storeId: unknown = ctx.storeA._id) => {
+    const res = await request.get(`/api/v1/stores/${storeId}/stock`).set(auth(admin)).query({ limit: 100 });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (variantId: string) => res.body.data.items.find((item: { variant: { id: string } }) => item.variant.id === variantId);
+  };
+
+  it("counts ordered minus received on issued and partially received POs, per store", async () => {
+    let item = await storeStock();
+    expect([item(coffee.variantId).onOrder, item(rice.variantId).onOrder]).toEqual([0, 0]);
+
+    // A draft is not on order yet.
+    const draft = await request
+      .post(storePos())
+      .set(auth(admin))
+      .set("Idempotency-Key", newKey())
+      .send({ vendorId: vatVendor, orderDate: "2026-10-01", lines: [{ variantId: coffee.variantId, quantity: 100 }] });
+    expect(draft.status).toBe(201);
+
+    const po = await issuedPo();
+    const second = await issuedPo({ lines: [{ variantId: coffee.variantId, quantity: 6 }] });
+    await issuedPo({ lines: [{ variantId: coffee.variantId, quantity: 50 }] }, ctx.storeB._id);
+    item = await storeStock();
+    expect([item(coffee.variantId).onOrder, item(rice.variantId).onOrder]).toEqual([30, 12.5]);
+
+    // Receiving lowers it.
+    const [coffeeLine, riceLine] = poLines(po);
+    const received = await receive({
+      purchaseOrderId: po.id,
+      receivedDate: "2026-10-05",
+      lines: [
+        { purchaseOrderLineId: coffeeLine, quantity: 24 },
+        { purchaseOrderLineId: riceLine, quantity: 6.25 },
+      ],
+    });
+    expect(received.status, JSON.stringify(received.body)).toBe(201);
+    item = await storeStock();
+    expect([item(coffee.variantId).onOrder, item(rice.variantId).onOrder]).toEqual([6, 6.25]);
+    expect((await storeStock(ctx.storeB._id))(coffee.variantId).onOrder).toBe(50);
+
+    // Cancelled and closed POs drop out.
+    const cancelled = await request.post(`${storePos()}/${second.id}/cancel`).set(auth(admin)).send({ version: second.version });
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    const partial = (await request.get(`${storePos()}/${po.id}`).set(auth(admin))).body.data.purchaseOrder;
+    const closed = await request
+      .post(`${storePos()}/${po.id}/close`)
+      .set(auth(admin))
+      .send({ version: partial.version, reason: "Rest unavailable" });
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+    item = await storeStock();
+    expect([item(coffee.variantId).onOrder, item(rice.variantId).onOrder]).toEqual([0, 0]);
+  });
+
+  it("is shown per store on a product's stock", async () => {
+    await issuedPo({ lines: [{ variantId: coffee.variantId, quantity: 10 }] });
+    await issuedPo({ lines: [{ variantId: coffee.variantId, quantity: 4 }] }, ctx.storeB._id);
+    const res = await request.get(`/api/v1/products/${coffee.productId}/stock`).set(auth(admin));
+    expect(res.status).toBe(200);
+    const stores = res.body.data.variants[0].stores as { store: { id: string }; onOrder: number }[];
+    const onOrderAt = (storeId: unknown) => stores.find((entry) => entry.store.id === String(storeId))!.onOrder;
+    expect([onOrderAt(ctx.storeA._id), onOrderAt(ctx.storeB._id)]).toEqual([10, 4]);
+  });
+});

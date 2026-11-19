@@ -558,7 +558,14 @@ export async function createVendorReturn(
           },
         },
       },
-      { $inc: { "lines.$.returnedQuantityMilli": line.quantityMilli, "lines.$.returnedUnbilledMilli": line.unbilledMilli } },
+      {
+        $inc: {
+          "lines.$.returnedQuantityMilli": line.quantityMilli,
+          "lines.$.returnedUnbilledMilli": line.unbilledMilli,
+          // Only the unbilled part stops being billable (see goodsReceipt.model).
+          billableQuantityMilli: -line.unbilledMilli,
+        },
+      },
       { session }
     );
     // The read and this write share the transaction's snapshot: a concurrent bill or return

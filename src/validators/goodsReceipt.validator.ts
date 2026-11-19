@@ -169,6 +169,11 @@ export const listGoodsReceiptsQuerySchema = z.object({
     description: "`true`: only receipts without a PO. Any other value is ignored.",
     example: "true",
   }),
+  billable: z.string().optional().openapi({
+    description:
+      "`true`: only receipts with goods left to bill (any line's `billableQuantity` above 0), the receipts a new vendor bill can pick from. `false`: only fully billed (or returned) receipts. Any other value is ignored.",
+    example: "true",
+  }),
   from: z.string().optional().openapi({ description: "Earliest `receivedDate` (YYYY-MM-DD), inclusive.", example: "2026-10-01" }),
   to: z.string().optional().openapi({ description: "Latest `receivedDate` (YYYY-MM-DD), inclusive.", example: "2026-10-31" }),
   page: z.number().int().optional().openapi({ description: "1-based page number (default 1).", example: 1 }),
