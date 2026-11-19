@@ -692,7 +692,10 @@ function duplicateInvoice(bill: { _id: ObjectId; number: string }): ApiError {
   );
 }
 
-/** Moves a receipt line's billed quantity by `deltaMilli`, never below 0 or above what was received. */
+/**
+ * Moves a receipt line's billed quantity by `deltaMilli`, never below 0 or above what was received,
+ * and the receipt's billable total the other way.
+ */
 async function moveBilledQuantity(
   organizationId: ObjectId,
   receiptId: ObjectId,
@@ -706,7 +709,7 @@ async function moveBilledQuantity(
   const room = deltaMilli > 0 ? { $not: { $gt: receivedMilli - deltaMilli } } : { $gte: -deltaMilli };
   const result = await GoodsReceipt.updateOne(
     { _id: receiptId, organizationId, storeId, lines: { $elemMatch: { _id: receiptLineId, billedQuantityMilli: room } } },
-    { $inc: { "lines.$.billedQuantityMilli": deltaMilli } },
+    { $inc: { "lines.$.billedQuantityMilli": deltaMilli, billableQuantityMilli: -deltaMilli } },
     { session }
   );
   return result.matchedCount === 1;

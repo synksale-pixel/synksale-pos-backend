@@ -2240,3 +2240,47 @@ Testing:
   - the Indian store fixture in `store.test.ts`, which now has `stateCode`.
 
 1448 tests pass.
+
+---
+
+## 📦 Purchasing: receipts left to bill and stock on order (2026-11-19)
+
+These are two requests from the frontend developer's 18 November note, approved in the Phase 4
+frontend review. Each one replaces client-side work.
+
+- **`GET /goods-receipts?billable=true`** (on both the store list and the cross-store list):
+  - It lists only receipts with goods left to bill, the ones a new vendor bill can pick from.
+    `false` lists the rest, and any other value is ignored.
+  - Summaries gain a `billable` boolean.
+  - The receipt stores `billableQuantityMilli`, the sum of each line's quantity minus billed
+    minus returned-unbilled. It is set when the receipt is posted. After that it moves only by
+    `$inc`, in the same update as the line counters:
+    - in `moveBilledQuantity` (bill, edit and void);
+    - in the vendor return, by the unbilled part.
+  - `isBilledQuantityUpdate` accepts that path.
+  - Three partial indexes (`billableQuantityMilli > 0`) serve the store, organization and vendor
+    lists without scanning lines.
+- **Backfill:** `npm run migrate:receipt-billable`, now part of `npm run migrate`.
+  - It recomputes the total for every receipt in one pipeline update per document, so it is
+    atomic against a concurrent bill and safe to run on a live database.
+  - It uses the raw collection, because the model refuses every update except a counter `$inc`.
+  - A receipt billed before the backfill runs gets a wrong total for a moment; the backfill
+    corrects it.
+- **`onOrder`** on `GET /stores/:storeId/stock` items and on each store entry of
+  `GET /products/:productId/stock`:
+  - It counts ordered minus received across the lines of `issued` and `partially_received`
+    POs (`ON_ORDER_PURCHASE_ORDER_STATUSES`). A line can't go below 0.
+  - Drafts don't count: they have not been sent to the vendor.
+  - It comes from one aggregation per page through `onOrderByVariantAndStore()` in
+    stock.service, which uses the `{organizationId, lines.variantId, status}` index.
+
+Testing:
+- `vendorReturns.test.ts` "billable receipts" (3):
+  - the total through posting, partial and full bills, unbilled and billed returns, and a bill
+    void;
+  - the filter combined with vendor, store and cross-store lists;
+  - the backfill.
+- `goodsReceipts.test.ts` "onOrder" (2): drafts, issued POs, partial receipts, other stores,
+  cancel and close, plus the product stock view.
+
+1453 tests pass.

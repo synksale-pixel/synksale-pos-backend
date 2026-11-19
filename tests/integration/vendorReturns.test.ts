@@ -20,6 +20,9 @@ import { Vendor } from "../../src/models/vendor.model";
 import { Bill } from "../../src/models/bill.model";
 import { DebitNote } from "../../src/models/debitNote.model";
 import { VendorReturn } from "../../src/models/vendorReturn.model";
+import { GoodsReceipt } from "../../src/models/goodsReceipt.model";
+import { backfillReceiptBillable } from "../../src/services/receiptBillableMigration.service";
+import mongoose from "mongoose";
 import { seedDefaultRolesForOrganization } from "../../src/services/roleSeed.service";
 import { seedDefaultTaxRates } from "../../src/services/taxRate.service";
 import { generateAccessToken } from "../../src/services/auth.service";
@@ -825,5 +828,79 @@ describe("concurrent returns, bills, payments and debit note credit", () => {
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
     expect((await Bill.findById(bill2.id))!.creditedMinor).toBe(5000);
     expect((await DebitNote.findById(note.id))!.appliedMinor).toBe(5000);
+  });
+});
+
+// ==========================================
+// Receipts with goods left to bill (?billable=true)
+// ==========================================
+
+describe("billable receipts", () => {
+  const listBillable = async (billable: string, query: Record<string, string> = {}) => {
+    const res = await request.get(grnPath()).set(auth(admin)).query({ billable, ...query });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return res.body.data.goodsReceipts as { id: string; billable: boolean }[];
+  };
+  const stored = async (id: string) => (await GoodsReceipt.findById(id))!.billableQuantityMilli;
+
+  it("follows posting, partial and full bills, unbilled and billed returns, and a bill void", async () => {
+    const grn = await receipt();
+    expect(await stored(grn.id)).toBe(24000);
+    expect((await listBillable("true")).map((r) => [r.id, r.billable])).toEqual([[grn.id, true]]);
+
+    const partial = await bill(grn, { quantity: 10 });
+    expect(await stored(grn.id)).toBe(14000);
+
+    // A return takes unbilled goods first: 4 of the remaining 14.
+    await returnOk({ lines: [line(grn, 4)] });
+    expect(await stored(grn.id)).toBe(10000);
+
+    const rest = await bill(grn, { quantity: 10 });
+    expect(await stored(grn.id)).toBe(0);
+    expect(await listBillable("true")).toEqual([]);
+    expect((await listBillable("false")).map((r) => [r.id, r.billable])).toEqual([[grn.id, false]]);
+
+    // Returning billed goods credits the bill: nothing becomes billable again.
+    await returnOk({ lines: [line(grn, 2, { billId: rest.id, billLineId: rest.lines[0].id })] });
+    expect(await stored(grn.id)).toBe(0);
+
+    // Voiding a bill gives its quantity back.
+    const voided = await request
+      .post(`${BILLS}/${partial.id}/void`)
+      .set(auth(admin))
+      .set("Idempotency-Key", newKey())
+      .send({ version: partial.version, reason: "Wrong invoice" });
+    expect(voided.status, JSON.stringify(voided.body)).toBe(200);
+    expect(await stored(grn.id)).toBe(10000);
+    expect((await listBillable("true")).map((r) => r.id)).toEqual([grn.id]);
+    // The stored total matches the line's billableQuantity.
+    expect((await receiptLine(grn.id)).billableQuantity).toBe(10);
+  });
+
+  it("combines with the other filters and the cross-store list", async () => {
+    const a = await receipt();
+    const b = await receipt({ vendorId: otherVendor });
+    const c = await receipt({ storeId: ctx.storeB._id });
+    await bill(a, { quantity: 24 });
+    expect((await listBillable("true")).map((r) => r.id)).toEqual([b.id]);
+    expect(await listBillable("true", { vendorId: vatVendor })).toEqual([]);
+    const all = await request.get("/api/v1/goods-receipts").set(auth(admin)).query({ billable: "true" });
+    expect(all.status).toBe(200);
+    expect(all.body.data.goodsReceipts.map((r: { id: string }) => r.id).sort()).toEqual([b.id, c.id].sort());
+    // Any other value is ignored.
+    expect(await listBillable("yes")).toHaveLength(2);
+  });
+
+  it("the backfill recomputes receipts posted before the total existed", async () => {
+    const grn = await receipt();
+    await bill(grn, { quantity: 5 });
+    await returnOk({ lines: [line(grn, 3)] });
+    await GoodsReceipt.collection.updateOne({ _id: new mongoose.Types.ObjectId(grn.id) }, { $unset: { billableQuantityMilli: "" } });
+    expect(await listBillable("true")).toEqual([]);
+
+    expect(await backfillReceiptBillable()).toEqual({ updated: 1 });
+    expect(await stored(grn.id)).toBe(16000);
+    expect((await listBillable("true")).map((r) => r.id)).toEqual([grn.id]);
+    expect(await backfillReceiptBillable()).toEqual({ updated: 0 });
   });
 });

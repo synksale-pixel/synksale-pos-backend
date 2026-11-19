@@ -38,6 +38,9 @@ export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUSES)[number];
 /** Statuses that still expect goods. A product or variant on one of these cannot be deleted. */
 export const OPEN_PURCHASE_ORDER_STATUSES: readonly PurchaseOrderStatus[] = ["draft", "issued", "partially_received"];
 
+/** Statuses whose unreceived quantities count as "on order": sent to the vendor (drafts are not). */
+export const ON_ORDER_PURCHASE_ORDER_STATUSES: readonly PurchaseOrderStatus[] = ["issued", "partially_received"];
+
 const MAX_LINES = 200;
 
 const optionalText = (label: string, max: number) =>

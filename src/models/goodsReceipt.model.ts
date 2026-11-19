@@ -8,6 +8,8 @@
  *
  * What is left to bill = quantity − billed − returnedUnbilled: a return takes unbilled goods
  * first, and only those stop being billable (returned goods that were billed are credited).
+ * The receipt keeps the total over its lines in `billableQuantityMilli`, moved by the same `$inc`
+ * as the line counters, so "receipts with goods left to bill" is an indexed query.
  *
  * - `number` (GRN-00001) is taken from the organization's counter inside the posting transaction.
  * - `vendorSnapshot` is the vendor's details at posting (the PO's issue copy against a PO).
@@ -66,6 +68,11 @@ export interface IGoodsReceipt {
   lines: IGoodsReceiptLine[];
   subtotalMinor: number;
   stockValueMinor: number;
+  /**
+   * Sum of billableMilli() over the lines: above 0 while any goods are left to bill. Set at
+   * posting, then moved only by `$inc` together with a line counter (and by the backfill).
+   */
+  billableQuantityMilli: number;
   createdBy: mongoose.Types.ObjectId;
   createdAt?: Date;
 }
@@ -117,6 +124,7 @@ const goodsReceiptSchema = new Schema<IGoodsReceipt, GoodsReceiptModel>(
     lines: { type: [lineSchema], required: true },
     subtotalMinor: { type: Number, required: true, validate: integer },
     stockValueMinor: { type: Number, required: true, validate: integer },
+    billableQuantityMilli: { type: Number, default: 0, validate: integer },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
@@ -129,6 +137,11 @@ goodsReceiptSchema.index({ organizationId: 1, sequence: -1 });
 goodsReceiptSchema.index({ organizationId: 1, vendorId: 1, sequence: -1 });
 /** A PO's delivery history. */
 goodsReceiptSchema.index({ organizationId: 1, purchaseOrderId: 1, sequence: -1 });
+/** "Goods left to bill" (?billable=true): only receipts with something left are in these indexes. */
+const BILLABLE = { partialFilterExpression: { billableQuantityMilli: { $gt: 0 } } };
+goodsReceiptSchema.index({ organizationId: 1, storeId: 1, sequence: -1 }, { ...BILLABLE, name: "billable_store_sequence" });
+goodsReceiptSchema.index({ organizationId: 1, sequence: -1 }, { ...BILLABLE, name: "billable_sequence" });
+goodsReceiptSchema.index({ organizationId: 1, vendorId: 1, sequence: -1 }, { ...BILLABLE, name: "billable_vendor_sequence" });
 /** Catalog delete checks: has this variant ever been received? */
 goodsReceiptSchema.index({ organizationId: 1, "lines.variantId": 1 });
 
@@ -148,10 +161,14 @@ for (const method of IMMUTABLE) {
   });
 }
 
-/** `lines.$.<counter>` or `lines.$[x].<counter>` for the billed and returned counters. */
-const COUNTER_PATH = /^lines\.\$(\[[A-Za-z0-9]*\])?\.(billedQuantityMilli|returnedQuantityMilli|returnedUnbilledMilli)$/;
+/**
+ * `lines.$.<counter>` or `lines.$[x].<counter>` for the billed and returned counters, or the
+ * receipt's billableQuantityMilli total.
+ */
+const COUNTER_PATH =
+  /^(lines\.\$(\[[A-Za-z0-9]*\])?\.(billedQuantityMilli|returnedQuantityMilli|returnedUnbilledMilli)|billableQuantityMilli)$/;
 
-/** The only update a receipt accepts: `$inc` of lines' billed and returned quantities. */
+/** The only update a receipt accepts: `$inc` of lines' billed and returned quantities (and their total). */
 export function isBilledQuantityUpdate(update: unknown): boolean {
   if (!update || typeof update !== "object" || Array.isArray(update)) return false;
   const inc = (update as Record<string, unknown>).$inc;

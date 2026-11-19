@@ -30,6 +30,7 @@ const listQuery = (req: Request): ListGoodsReceiptsQuery => ({
   vendorId: queryString(req.query.vendorId),
   purchaseOrderId: queryString(req.query.purchaseOrderId),
   withoutPurchaseOrder: queryString(req.query.withoutPurchaseOrder),
+  billable: queryString(req.query.billable),
   from: queryString(req.query.from),
   to: queryString(req.query.to),
   page: queryNumber(req.query.page),

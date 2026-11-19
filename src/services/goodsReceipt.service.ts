@@ -352,7 +352,7 @@ function coreView(ctx: ViewContext, receipt: GoodsReceiptDocument) {
 }
 
 function summaryView(ctx: ViewContext, receipt: GoodsReceiptDocument) {
-  return { ...coreView(ctx, receipt), lineCount: receipt.lines.length };
+  return { ...coreView(ctx, receipt), lineCount: receipt.lines.length, billable: (receipt.billableQuantityMilli ?? 0) > 0 };
 }
 
 function detailView(ctx: ViewContext, receipt: GoodsReceiptDocument) {
@@ -392,6 +392,7 @@ export interface ListGoodsReceiptsQuery {
   vendorId?: string;
   purchaseOrderId?: string;
   withoutPurchaseOrder?: string;
+  billable?: string;
   from?: string;
   to?: string;
   page?: number;
@@ -432,6 +433,9 @@ export async function listGoodsReceipts(
     conditions.push({ [field]: oid(value) });
   }
   if (query.withoutPurchaseOrder === "true") conditions.push({ purchaseOrderId: null });
+  // Matches the partial "billable" indexes, so the bill form's receipt picker stays an index scan.
+  if (query.billable === "true") conditions.push({ billableQuantityMilli: { $gt: 0 } });
+  else if (query.billable === "false") conditions.push({ billableQuantityMilli: { $not: { $gt: 0 } } });
 
   const from = query.from?.trim();
   const to = query.to?.trim();
@@ -671,6 +675,7 @@ export async function createGoodsReceipt(
         lines,
         subtotalMinor: sumMoney(lines.map((line) => line.subtotalMinor)),
         stockValueMinor: sumMoney(lines.map((line) => line.stockValueMinor)),
+        billableQuantityMilli: lines.reduce((total, line) => total + line.quantityMilli, 0),
         createdBy: actor,
         createdAt: at,
       },
