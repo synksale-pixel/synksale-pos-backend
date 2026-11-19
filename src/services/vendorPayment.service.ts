@@ -15,7 +15,7 @@
 import mongoose from "mongoose";
 import { Bill, BillDocument, billDueMinor } from "../models/bill.model";
 import { VendorPayment, VendorPaymentDocument } from "../models/vendorPayment.model";
-import { DocumentCounter } from "../models/documentCounter.model";
+import { nextDocumentNumber } from "./documentNumber.service";
 import { Vendor, VendorDocument } from "../models/vendor.model";
 import { ApiError, ApiErrorDetail } from "../utils/ApiError";
 import { formatMoney, sumMoney } from "../utils/money";
@@ -300,12 +300,7 @@ export async function createVendorPayment(
   // Counts toward the vendor's purchase documents (it already has bills, so this only adds to the count).
   await Vendor.updateOne({ _id: vendor._id, organizationId: orgId }, { $inc: { purchaseDocumentCount: 1 } }, { session });
 
-  const counter = await DocumentCounter.findOneAndUpdate(
-    { organizationId: orgId, type: "vendor_payment" },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, session }
-  );
-  const sequence = counter!.seq;
+  const sequence = await nextDocumentNumber({ organizationId: orgId, type: "vendor_payment" }, session);
   const number = `PAY-${String(sequence).padStart(5, "0")}`;
 
   const [payment] = await VendorPayment.create(

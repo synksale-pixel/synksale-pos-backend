@@ -21,7 +21,7 @@
 import mongoose from "mongoose";
 import { Bill, BillDocument, IBillLine, billDueMinor } from "../models/bill.model";
 import { DebitNote, DebitNoteDocument, IDebitNoteLine } from "../models/debitNote.model";
-import { DocumentCounter } from "../models/documentCounter.model";
+import { nextDocumentNumber } from "./documentNumber.service";
 import { Vendor, VendorDocument } from "../models/vendor.model";
 import { ApiError, ApiErrorDetail } from "../utils/ApiError";
 import { applyRate, formatMoney, sumMoney } from "../utils/money";
@@ -183,12 +183,7 @@ export async function postDebitNote(
 
   await Vendor.updateOne({ _id: bill.vendorId, organizationId }, { $inc: { purchaseDocumentCount: 1 } }, { session });
 
-  const counter = await DocumentCounter.findOneAndUpdate(
-    { organizationId, type: "debit_note" },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, session }
-  );
-  const sequence = counter!.seq;
+  const sequence = await nextDocumentNumber({ organizationId: organizationId, type: "debit_note" }, session);
   const number = `DN-${String(sequence).padStart(5, "0")}`;
 
   const [note] = await DebitNote.create(

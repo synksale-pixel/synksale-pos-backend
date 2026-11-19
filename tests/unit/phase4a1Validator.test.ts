@@ -1,5 +1,5 @@
 /**
- * Purpose: Phase 4a-1 contract rules that need no database: country-aware tax IDs (GSTIN check
+ * Purpose: Phase 4a-1 rules that need no database: country-aware tax IDs (GSTIN check
  * character, Saudi and 15-digit TRNs), the new store, organization and product fields, and the
  * per-currency cash rounding and per-country defaults.
  */
@@ -11,6 +11,7 @@ import { updateOrganizationSchema } from "../../src/validators/organization.vali
 import { createProductSchema, hsnOrSacProblem, updateProductSchema } from "../../src/validators/product.validator";
 import { COUNTRIES, CURRENCIES } from "../../src/config/currencies.config";
 import { GST_STATES } from "../../src/config/gstStates.config";
+import { fiscalYearOf, formatSaleNumber } from "../../src/services/documentNumber.service";
 import { singleExample, serviceExample } from "../../src/docs/product.openapi";
 
 const VALID_GSTIN = "29ABCDE1234F1ZW";
@@ -104,10 +105,10 @@ describe("organization settings", () => {
       legalNameAr: "شركة النور للتجارة",
       settings: {
         fiscalYearStartMonth: 4,
-        sales: { paymentMethods: ["cash", "upi"], cashRounding: "1.00", maxDiscountPercent: 12.5 },
+        sales: { paymentMethods: ["cash", "wallet"], cashRounding: "1.00", maxDiscountPercent: 12.5 },
       },
     });
-    expect(parsed.settings?.sales?.paymentMethods).toEqual(["cash", "upi"]);
+    expect(parsed.settings?.sales?.paymentMethods).toEqual(["cash", "wallet"]);
   });
 
   it("refuses a bad month, missing cash, repeats, unknown methods, a bad step and a bad cap", () => {
@@ -115,7 +116,7 @@ describe("organization settings", () => {
     expect(bad({ fiscalYearStartMonth: 13 })).toMatch(/1-12/);
     expect(bad({ sales: { paymentMethods: ["card"] } })).toMatch(/cash cannot be disabled/);
     expect(bad({ sales: { paymentMethods: ["cash", "cash"] } })).toMatch(/must not repeat/);
-    expect(bad({ sales: { paymentMethods: ["cash", "wallet"] } })).toMatch(/payment methods must be from/);
+    expect(bad({ sales: { paymentMethods: ["cash", "upi"] } })).toMatch(/payment methods must be from/);
     expect(bad({ sales: { cashRounding: "quarter" } })).toMatch(/decimal amount/);
     expect(bad({ sales: { maxDiscountPercent: 100.5 } })).toMatch(/0-100/);
     expect(bad({ sales: { maxDiscountPercent: 10.125 } })).toMatch(/2 decimals/);
@@ -151,5 +152,34 @@ describe("product fields", () => {
     ]);
     expect(issues(updateProductSchema.safeParse({ hsnOrSac: "12ab" }))[0]).toMatch(/4-8 digits/);
     expect(issues(updateProductSchema.safeParse({ hsnOrSac: null, nameAr: null }))).toEqual([]);
+  });
+});
+
+describe("sale numbering helpers", () => {
+  it("works out the fiscal year from the store's local date", () => {
+    // India, April start: 31 March belongs to the year that began the previous April.
+    expect(fiscalYearOf(new Date("2027-03-31T12:00:00Z"), 4, "Asia/Kolkata")).toBe(2026);
+    expect(fiscalYearOf(new Date("2027-04-01T00:00:00+05:30"), 4, "Asia/Kolkata")).toBe(2027);
+    // 22:30 UTC on 31 March is already 1 April in India.
+    expect(fiscalYearOf(new Date("2027-03-31T22:30:00Z"), 4, "Asia/Kolkata")).toBe(2027);
+    // January start: the calendar year, by the store's clock (Bahrain is UTC+3).
+    expect(fiscalYearOf(new Date("2026-12-31T21:30:00Z"), 1, "Asia/Bahrain")).toBe(2027);
+    expect(fiscalYearOf(new Date("2026-12-31T20:30:00Z"), 1, "Asia/Bahrain")).toBe(2026);
+  });
+
+  it("formats invoice and credit note numbers within India's 16 characters", () => {
+    expect(formatSaleNumber("SEEF", 2026, 123, "invoice")).toBe("SEEF-26-000123");
+    expect(formatSaleNumber("SEEF", 2026, 45, "credit_note")).toBe("SEEF-26-R000045");
+    expect(formatSaleNumber("ABCDE", 2030, 999999, "credit_note").length).toBeLessThanOrEqual(16);
+  });
+
+  it("seeds GST as equal CGST + SGST halves in India and VAT elsewhere", () => {
+    expect(COUNTRIES.IN.defaultTaxRates.map((rate) => rate.name)).toEqual(["GST 18%", "GST 5%"]);
+    expect(COUNTRIES.IN.defaultTaxRates[1].components).toEqual([
+      { name: "CGST", rate: 2.5 },
+      { name: "SGST", rate: 2.5 },
+    ]);
+    expect(COUNTRIES.BH.defaultTaxRates).toEqual([{ name: "VAT 10%", components: [{ name: "VAT", rate: 10 }] }]);
+    expect(COUNTRIES.KW.defaultTaxRates).toEqual([]);
   });
 });

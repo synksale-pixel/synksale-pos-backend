@@ -32,7 +32,6 @@ import { unitAllowsDecimal } from "../config/units.config";
 import { getOrganizationCurrency } from "./organization.service";
 import { assertCategoryExists, categoryNotFound, categoryRefs, categoryWithDescendants, CategoryRef } from "./category.service";
 import { claimCategory, claimTaxRate } from "./catalogClaims.service";
-import { refuseUntilImplemented } from "../utils/contractPreview";
 import { assertVendorSelectable, vendorRefs, VendorRef } from "./vendor.service";
 import { openPurchaseOrderNumbers } from "./purchaseOrder.service";
 import { GoodsReceipt } from "../models/goodsReceipt.model";
@@ -53,6 +52,7 @@ import type {
   VariantInput,
   UpdateVariantInput,
 } from "../validators/product.validator";
+import { hsnOrSacProblem } from "../validators/product.validator";
 
 export interface ListProductsInput {
   search?: string;
@@ -573,6 +573,8 @@ function toProductView(
   return {
     ...productCore(product, variants, category, decimals),
     organizationId: product.organizationId,
+    nameAr: product.nameAr ?? null,
+    hsnOrSac: product.hsnOrSac ?? null,
     brand: product.brand ?? null,
     manufacturer: product.manufacturer ?? null,
     taxRate,
@@ -772,7 +774,6 @@ export async function lookupProduct(organizationId: string, code: string, option
 // ==========================================
 
 export async function createProduct(organizationId: string, input: CreateProductInput, actorUserId: string) {
-  refuseUntilImplemented("Phase 4a-1", { nameAr: input.nameAr, hsnOrSac: input.hsnOrSac });
   const decimals = await currencyDecimals(organizationId);
   if (input.categoryId) {
     await assertCategoryExists(organizationId, input.categoryId);
@@ -786,6 +787,8 @@ export async function createProduct(organizationId: string, input: CreateProduct
   const product = new Product({
     organizationId: new mongoose.Types.ObjectId(organizationId),
     name: input.name,
+    nameAr: input.nameAr ?? null,
+    hsnOrSac: input.hsnOrSac ?? null,
     type: input.type,
     itemType: input.itemType,
     categoryId: input.categoryId ?? null,
@@ -944,7 +947,6 @@ export async function updateProduct(
   input: UpdateProductInput,
   actorUserId: string
 ) {
-  refuseUntilImplemented("Phase 4a-1", { nameAr: input.nameAr, hsnOrSac: input.hsnOrSac });
   const product = await findProductOrThrow(organizationId, productId);
   const decimals = await currencyDecimals(organizationId);
   const isSingle = product.itemType === "single";
@@ -968,6 +970,11 @@ export async function updateProduct(
   }
   if (isSingle && input.attributes !== undefined) {
     throw validationError("attributes", "Only variant items have attributes.");
+  }
+  if (input.hsnOrSac) {
+    // The type cannot change, so the stored one decides HSN (goods) or SAC (services).
+    const problem = hsnOrSacProblem(product.type, input.hsnOrSac);
+    if (problem) throw validationError("hsnOrSac", problem);
   }
   if (isService) {
     if (input.brand) throw validationError("brand", "Services have no brand.");
@@ -1053,6 +1060,8 @@ export async function updateProduct(
     if (value !== undefined) product.set(path, value);
   };
   set("name", input.name);
+  set("nameAr", input.nameAr);
+  set("hsnOrSac", input.hsnOrSac);
   set("categoryId", input.categoryId);
   set("unit", input.unit);
   set("brand", input.brand);

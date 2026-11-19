@@ -11,7 +11,7 @@ import { User } from "../models/user.model";
 import { Role } from "../models/role.model";
 import { seedDefaultRolesForOrganization } from "./roleSeed.service";
 import { seedDefaultTaxRates } from "./taxRate.service";
-import { DEFAULT_CURRENCY } from "../config/currencies.config";
+import { DEFAULT_CURRENCY, countrySalesDefaults } from "../config/currencies.config";
 import { ApiError } from "../utils/ApiError";
 
 export interface SignupOrganizationInput {
@@ -104,6 +104,8 @@ async function signupOrganizationOnce(input: SignupOrganizationInput) {
           settings: {
             currency,
             timezone: "UTC",
+            fiscalYearStartMonth: countrySalesDefaults(currency).fiscalYearStartMonth,
+            sales: { paymentMethods: countrySalesDefaults(currency).paymentMethods },
           },
         },
       ],

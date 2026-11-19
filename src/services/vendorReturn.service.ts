@@ -23,7 +23,7 @@ import mongoose from "mongoose";
 import { VendorReturn, VendorReturnDocument, IVendorReturnLine, IVendorReturnDebitNoteRef } from "../models/vendorReturn.model";
 import { GoodsReceipt, GoodsReceiptDocument, IGoodsReceiptLine, billableMilli } from "../models/goodsReceipt.model";
 import { Bill, BillDocument, IBillLine } from "../models/bill.model";
-import { DocumentCounter } from "../models/documentCounter.model";
+import { nextDocumentNumber } from "./documentNumber.service";
 import { Vendor, VendorDocument } from "../models/vendor.model";
 import { Product, ProductDocument } from "../models/product.model";
 import { ProductVariant, ProductVariantDocument, variantDisplayName } from "../models/productVariant.model";
@@ -539,12 +539,7 @@ export async function createVendorReturn(
   const actor = oid(actorUserId);
   const at = new Date();
   const returnId = new mongoose.Types.ObjectId();
-  const counter = await DocumentCounter.findOneAndUpdate(
-    { organizationId: orgId, type: "vendor_return" },
-    { $inc: { seq: 1 } },
-    { upsert: true, new: true, session }
-  );
-  const sequence = counter!.seq;
+  const sequence = await nextDocumentNumber({ organizationId: orgId, type: "vendor_return" }, session);
   const number = `RTN-${String(sequence).padStart(5, "0")}`;
 
   const lines: IVendorReturnLine[] = [];
