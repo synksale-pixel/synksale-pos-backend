@@ -320,6 +320,18 @@ export const TenantMeSchema = UserSchema.extend({
       "Effective permission keys for the user (org role, plus the store role if ?storeId= is provided and the user is assigned to it). Super Admins get [\"*\"].",
     example: ["user:invite", "product:read", "sale:create"],
   }),
+  storeRole: z
+    .object({
+      _id: objectId("665f1c2e8a4b3c0012ab34d1"),
+      name: z.string().openapi({ example: "Cashier" }),
+      slug: z.string().openapi({ example: "cashier" }),
+      scope: z.enum(["platform", "organization", "store"]).openapi({ example: "store" }),
+    })
+    .nullable()
+    .openapi({
+      description:
+        "The user's role at `?storeId=`, for DISPLAY only (e.g. a 'Cashier' badge). null when no storeId is passed, the user is not assigned to that store (an org-wide admin usually is not), or the role was deleted. Never gate features on its name or slug (system roles can be renamed); use `permissions`.",
+    }),
 }).openapi("TenantMe");
 
 // ---------- Per-endpoint data payloads ----------

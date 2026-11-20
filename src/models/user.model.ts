@@ -106,6 +106,16 @@ const storeAccessSchema = new Schema<IStoreAccess>({
   },
 });
 
+/**
+ * Hashes a plaintext password the same way the pre-save hook does. Exported for writes that
+ * bypass save() (e.g. change-password's atomic update), so both paths stay identical.
+ */
+export async function hashPassword(plain: string): Promise<string> {
+  // 10 rounds is an industry standard offering a good balance of safety and computational cost
+  const salt = await bcrypt.genSalt(10);
+  return bcrypt.hash(plain, salt);
+}
+
 const userSchema = new Schema<
   IUser,
   UserModel,
@@ -284,9 +294,7 @@ userSchema.pre("save", async function (next) {
     return next();
   }
   try {
-    // 10 rounds is an industry standard offering a good balance of safety and computational cost
-    const salt = await bcrypt.genSalt(10);
-    this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
+    this.passwordHash = await hashPassword(this.passwordHash);
     next();
   } catch (error) {
     next(error as Error);

@@ -2,6 +2,8 @@ import { registry, z } from "../config/openapi.registry";
 import {
   signupSchema,
   tenantLoginSchema,
+  updateMeSchema,
+  changePasswordSchema,
 } from "../validators/organizationAuth.validator";
 import {
   refreshSchema,
@@ -165,7 +167,7 @@ registry.registerPath({
   tags,
   summary: "Current user profile and effective permissions",
   description:
-    "Requires a **tenant** bearer token. Returns the user with `organizationId` and `orgRoleId` expanded into full objects, plus `permissions`: the resolved permission keys. Pass `storeId` to include the permissions of the user's role at that store (only applied if the user is assigned to that store; an unassigned storeId is silently ignored, not a 403). Use this to drive UI feature gating.",
+    "Requires a **tenant** bearer token. Returns the user with `organizationId` and `orgRoleId` expanded into full objects, plus `permissions`: the resolved permission keys. Pass `storeId` to include the permissions of the user's role at that store (only applied if the user is assigned to that store; an unassigned storeId is silently ignored, not a 403). Also returns `storeRole` (display only; see schema). Use `permissions` to drive UI feature gating.",
   security,
   request: {
     query: z.object({
@@ -187,6 +189,74 @@ registry.registerPath({
       ),
     },
     401: TENANT_AUTH_401,
+    500: server500,
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: `${API}/auth/me`,
+  tags,
+  summary: "Update my profile (name)",
+  description:
+    "Requires a **tenant** bearer token. No specific permission required: users always edit their own profile. Only `firstName` and `lastName` can be changed (at least one, each 1-50 characters, trimmed). Any other key (email, role, store access...) is rejected with 400. Email cannot be changed here. Accepts the same optional `storeId` query as GET /auth/me and returns the same shape.",
+  security,
+  request: {
+    query: z.object({
+      storeId: z.string().optional().openapi({
+        description: "Optional store ID, as on GET /auth/me.",
+        example: "665f1c2e8a4b3c0012ab34ef",
+      }),
+    }),
+    body: { required: true, content: json(updateMeSchema) },
+  },
+  responses: {
+    200: {
+      description: "Profile updated.",
+      content: json(
+        successEnvelope("TenantUpdateMeResponse", TenantMeSchema, "Profile updated successfully")
+      ),
+    },
+    400: validation400,
+    401: TENANT_AUTH_401,
+    500: server500,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: `${API}/auth/change-password`,
+  tags,
+  summary: "Change my password",
+  description:
+    "Requires a **tenant** bearer token. Verifies `currentPassword`, sets `newPassword` (minimum 8 characters, must differ from the current one) and **signs out every other device**: all refresh tokens are revoked. The response carries a NEW token pair for this device, the same shape as /auth/refresh: replace both stored tokens with these. (Other devices' access tokens keep working until they expire, at most 15 minutes.) A wrong current password is a **400** `VALIDATION_FAILED` on field `currentPassword` (not 401), so show it as a form error.",
+  security,
+  request: { body: { required: true, content: json(changePasswordSchema) } },
+  responses: {
+    200: {
+      description: "Password changed; new token pair for this device.",
+      content: json(
+        successEnvelope(
+          "TenantChangePasswordResponse",
+          AuthRefreshDataSchema,
+          "Password changed successfully. Other devices have been signed out."
+        )
+      ),
+    },
+    400: errorResponse(
+      "Validation failed, or the current password is wrong (`errors[0].field` = `currentPassword`).",
+      "Request Validation Failed: currentPassword: Current password is incorrect.",
+      400,
+      "VALIDATION_FAILED",
+      [{ field: "currentPassword", code: "VALIDATION_FAILED", message: "Current password is incorrect." }]
+    ),
+    401: TENANT_AUTH_401,
+    409: errorResponse(
+      "The password was changed by another request at the same moment. Sign in again.",
+      "Your password was changed by another request. Please sign in again.",
+      409,
+      "PASSWORD_CHANGED_CONCURRENTLY"
+    ),
     500: server500,
   },
 });
