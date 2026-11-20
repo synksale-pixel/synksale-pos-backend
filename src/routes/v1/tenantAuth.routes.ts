@@ -9,6 +9,8 @@ import { authenticate } from "../../middleware/rbac.middleware";
 import {
   signupSchema,
   tenantLoginSchema,
+  updateMeSchema,
+  changePasswordSchema,
 } from "../../validators/organizationAuth.validator";
 import {
   refreshSchema,
@@ -21,6 +23,8 @@ import {
   logout,
   logoutAllDevices,
   me,
+  updateMe,
+  changePassword,
 } from "../../controllers/tenantAuth.controller";
 
 const tenantAuthRouter = Router();
@@ -34,5 +38,12 @@ tenantAuthRouter.post("/logout", validateRequest(logoutSchema), logout);
 // Protected routes (require authenticate middleware)
 tenantAuthRouter.post("/logout-all", authenticate, logoutAllDevices);
 tenantAuthRouter.get("/me", authenticate, me);
+tenantAuthRouter.patch("/me", authenticate, validateRequest(updateMeSchema), updateMe);
+tenantAuthRouter.post(
+  "/change-password",
+  authenticate,
+  validateRequest(changePasswordSchema),
+  changePassword
+);
 
 export default tenantAuthRouter;

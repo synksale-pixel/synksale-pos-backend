@@ -18,7 +18,8 @@ import {
 } from "../services/auth.service";
 import { hashToken, getExpiryDate } from "../utils/token.util";
 import { Organization } from "../models/organization.model";
-import { User } from "../models/user.model";
+import { IUser, User, hashPassword } from "../models/user.model";
+import { Role } from "../models/role.model";
 import { getEffectivePermissions } from "../services/permission.service";
 import { env } from "../config/env.config";
 
@@ -374,24 +375,179 @@ export const logoutAllDevices = asyncHandler(
  * Accepts optional storeId parameter from query string to include store-level authorization context.
  */
 export const me = asyncHandler(async (req: Request, res: Response) => {
-  const user = req.user!;
   const storeId = req.query.storeId as string | undefined;
 
-  // Resolve permissions dynamically based on the current context (including store context if provided)
-  const permissions = await getEffectivePermissions(user, storeId);
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        await buildMeResponse(req.user!, storeId),
+        "Profile and permissions resolved successfully"
+      )
+    );
+});
 
-  const userResponse = user.toObject() as any;
+/**
+ * The role the user holds at `storeId`, or null when no storeId is given, the user is not
+ * assigned to that store, or the role no longer exists. For display only: clients gate features
+ * on `permissions`, never on the role's name or slug (system roles can be renamed).
+ */
+async function resolveStoreRole(user: IUser, storeId?: string) {
+  if (!storeId) return null;
+  const access = (user.storeAccess ?? []).find(
+    (a) => a.storeId.toString() === storeId
+  );
+  if (!access) return null;
+  const role = await Role.findById(access.roleId)
+    .select("name slug scope")
+    .lean()
+    .exec();
+  return role
+    ? { _id: role._id, name: role.name, slug: role.slug, scope: role.scope }
+    : null;
+}
+
+/** The /auth/me payload: user (org + org role populated) plus resolved permissions and store role. */
+async function buildMeResponse(user: IUser, storeId?: string) {
+  const [permissions, storeRole] = await Promise.all([
+    getEffectivePermissions(user, storeId),
+    resolveStoreRole(user, storeId),
+  ]);
+
+  const userResponse = (user as any).toObject();
   delete userResponse.passwordHash;
   delete userResponse.refreshTokens;
 
-  res.status(200).json(
-    new ApiResponse(
-      200,
-      {
-        ...userResponse,
-        permissions,
-      },
-      "Profile and permissions resolved successfully"
-    )
-  );
+  return { ...userResponse, permissions, storeRole };
+}
+
+/**
+ * Update My Profile:
+ * The signed-in user edits their own first/last name. The validator is strict, so only these
+ * two fields can ever reach the update (no role, store access or email changes through here).
+ * Accepts the same optional ?storeId= as GET /me and returns the same shape.
+ */
+export const updateMe = asyncHandler(async (req: Request, res: Response) => {
+  const storeId = req.query.storeId as string | undefined;
+  const { firstName, lastName } = req.body as {
+    firstName?: string;
+    lastName?: string;
+  };
+
+  const $set: Record<string, string> = {};
+  if (firstName !== undefined) $set.firstName = firstName;
+  if (lastName !== undefined) $set.lastName = lastName;
+
+  const updated = await User.findOneAndUpdate(
+    { _id: req.user!._id },
+    { $set },
+    { new: true, runValidators: true }
+  ).populate(["orgRoleId", "organizationId"]);
+
+  if (!updated) {
+    throw new ApiError(
+      401,
+      "Authentication failed: The user account associated with this token does not exist."
+    );
+  }
+
+  logger.info(`[TENANT_AUTH] Profile updated for user: ${updated._id}`);
+
+  res
+    .status(200)
+    .json(
+      new ApiResponse(
+        200,
+        await buildMeResponse(updated, storeId),
+        "Profile updated successfully"
+      )
+    );
 });
+
+/**
+ * Change Password:
+ * Verifies the current password, then in ONE atomic update stores the new hash and replaces every
+ * refresh token with a single fresh one for this device. Every other device is signed out (its
+ * access token lives at most JWT_ACCESS_EXPIRY). The write is conditioned on the old hash, so two
+ * concurrent changes cannot both succeed, and a concurrent /refresh cannot resurrect a session.
+ *
+ * A wrong current password is a 400 on `currentPassword`, not a 401: a 401 would trip the
+ * client's refresh/logout interceptor for what is really a form error.
+ */
+export const changePassword = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword: string;
+      newPassword: string;
+    };
+    const ipAddress =
+      req.ip || req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+
+    const user = await User.findById(req.user!._id).select("+passwordHash");
+    if (!user || !(await user.comparePassword(currentPassword))) {
+      logger.warn(
+        `[TENANT_AUTH] Failed password change for user: ${req.user!._id} from IP: ${ipAddress} - Reason: Incorrect current password`
+      );
+      throw ApiError.invalidField(
+        "currentPassword",
+        "Current password is incorrect."
+      );
+    }
+
+    const newHash = await hashPassword(newPassword);
+    const accessToken = generateAccessToken({
+      userId: user._id.toString(),
+      organizationId: user.organizationId!.toString(),
+      isSuperAdmin: false,
+    });
+    const { token: refreshToken, hashedToken } = generateRefreshToken();
+
+    const result = await User.updateOne(
+      { _id: user._id, passwordHash: user.passwordHash },
+      {
+        $set: {
+          passwordHash: newHash,
+          refreshTokens: [
+            {
+              token: hashedToken,
+              createdAt: new Date(),
+              expiresAt: getExpiryDate(env.JWT_REFRESH_EXPIRY),
+              userAgent: req.headers["user-agent"],
+              ipAddress: String(ipAddress),
+            },
+          ],
+        },
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      logger.warn(
+        `[TENANT_AUTH] Failed password change for user: ${user._id} from IP: ${ipAddress} - Reason: Password changed concurrently`
+      );
+      throw ApiError.coded(
+        409,
+        "PASSWORD_CHANGED_CONCURRENTLY",
+        "Your password was changed by another request. Please sign in again."
+      );
+    }
+
+    logger.info(
+      `[TENANT_AUTH] Password changed for user: ${user._id} from IP: ${ipAddress} - All other sessions revoked`
+    );
+
+    const userResponse = user.toObject() as any;
+    delete userResponse.passwordHash;
+    delete userResponse.refreshTokens;
+
+    res
+      .status(200)
+      .json(
+        new ApiResponse(
+          200,
+          { accessToken, refreshToken, user: userResponse },
+          "Password changed successfully. Other devices have been signed out."
+        )
+      );
+  }
+);

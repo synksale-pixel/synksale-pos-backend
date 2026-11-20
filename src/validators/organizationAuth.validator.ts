@@ -100,3 +100,45 @@ export const tenantLoginSchema = z.object({
     .min(1, { message: "Password is required." })
     .openapi({ example: "S3cure!Passw0rd" }),
 });
+
+const profileName = (label: string, example: string) =>
+  z
+    .string()
+    .trim()
+    .min(1, { message: `${label} cannot be empty.` })
+    .max(50, { message: `${label} must be at most 50 characters long.` })
+    .openapi({ example });
+
+/**
+ * PATCH /auth/me: the signed-in user edits their own display name.
+ * Strict on purpose: this route has no permission gate, so any other key (orgRoleId,
+ * storeAccess, email, isActive, ...) must be rejected, never silently applied or dropped.
+ */
+export const updateMeSchema = z
+  .object({
+    firstName: profileName("First name", "Rohan").optional(),
+    lastName: profileName("Last name", "Sharma").optional(),
+  })
+  .strict()
+  .refine((body) => body.firstName !== undefined || body.lastName !== undefined, {
+    message: "Provide at least one of firstName or lastName.",
+  });
+
+/** POST /auth/change-password */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z
+      .string()
+      .min(1, { message: "Current password is required." })
+      .openapi({ description: "The user's current password.", example: "OldPassw0rd!" }),
+    newPassword: z
+      .string()
+      .min(PASSWORD_MIN_LENGTH, {
+        message: `Password must be at least ${PASSWORD_MIN_LENGTH} characters long.`,
+      })
+      .openapi({ description: `Minimum ${PASSWORD_MIN_LENGTH} characters.`, example: "N3wS3cure!Pass" }),
+  })
+  .refine((body) => body.newPassword !== body.currentPassword, {
+    message: "New password must be different from the current password.",
+    path: ["newPassword"],
+  });
