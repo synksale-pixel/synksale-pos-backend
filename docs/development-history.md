@@ -2284,3 +2284,133 @@ Testing:
   cancel and close, plus the product stock view.
 
 1453 tests pass.
+
+---
+
+## 🔑 Tenant self-service auth (2026-11-20, PR #31)
+
+From the frontend developer's 20 November note (items 1a and 2).
+
+- `GET /auth/me?storeId=` returns `storeRole: { _id, name, slug, scope }` or null (no storeId,
+  not assigned there, role deleted). For display only: features are gated on `permissions`.
+- `PATCH /auth/me` changes `firstName` / `lastName` only. The schema is strict, so a role, store
+  access, email or `isActive` in the body is a 400. Email can't be changed (it is the login).
+- `POST /auth/change-password` checks `currentPassword` (wrong: 400 on that field, not 401, so
+  the client's logout interceptor is not tripped). One update, conditioned on the old hash,
+  stores the new hash and replaces every refresh token with a new one for this device, and the
+  response is a new token pair like `/auth/refresh`. A simultaneous change gets
+  `409 PASSWORD_CHANGED_CONCURRENTLY`. `hashPassword` is shared with the user pre-save hook.
+- **Declined:** adding `sale:refund` to the Cashier template. `sync:system-roles` would push it
+  into every existing organization, and system-role permissions can't be edited, so no shop could
+  take it back. Refunds stay manager-only; a manager approval at the till is designed in 4d.
+
+Testing: `tenantSelfService.test.ts` (12). 1465 tests pass.
+
+---
+
+## 🧾 Sales — Phase 4a-2 contract (registers, customers, till: validators + Swagger, no endpoints yet)
+
+The **Registers**, **Customers** and **Till** endpoints are documented in Swagger with a
+"contract preview" note and return 404 until implemented:
+
+- `GET/POST /stores/{storeId}/registers`, `GET/PATCH/DELETE /stores/{storeId}/registers/{registerId}`
+- `GET/POST /customers`, `GET /customers/lookup?phone=`, `POST /customers/import`,
+  `GET/PATCH/DELETE /customers/{customerId}`
+- `GET /stores/{storeId}/till/lookup?code=`, `GET /stores/{storeId}/till/items`
+
+Built on the Phase 4 decisions, the frontend review of 19 November and the 20 November note
+decisions (customer bulk import in 4a-2; cashier refunds stay manager-only).
+
+### Registers
+
+1. A register is one till in a store: `name` (unique per store, case-insensitive,
+   `REGISTER_NAME_TAKEN`) and `isActive`. Opening float, drawer limit and the current shift are
+   per register and arrive in 4b.
+2. **Every store starts with one:** creating a store creates `Register 1`, and the 4a-2
+   migration gives each existing store one, so the till works without set-up.
+3. Listing and reading need only access to the store (every cashier picks a register), and work
+   for a deactivated store. Create, edit and delete need `store:configure` there.
+4. Delete only a register that has never had a shift (`REGISTER_IN_USE` from 4b); deactivate
+   otherwise. A register with an open shift can't be deactivated (`REGISTER_HAS_OPEN_SHIFT`,
+   from 4b). No `Idempotency-Key`: a retried create hits the name rule.
+
+### Customers
+
+5. Organization-wide. Fields: `name` and `phone` (required), `email`, `address`
+   (line1, line2, city, state, postalCode; printed on a full tax invoice),
+   `taxRegistrationNumber`, `notes`, `isActive`. Read-only: `stateCode` (India, from the
+   GSTIN's first two digits) and `saleCount`. No loyalty points or wallet (decision E). The
+   frontend's `city` is `address.city`.
+6. **Phone matching** (`src/utils/phone.ts`, `phoneKey`): digits only; a leading `+` or `00`
+   marks an international number. The organization's calling code is removed (also when typed
+   without `+` but followed by a full national number). The trunk 0 is removed in AE, SA and
+   IN. A foreign number is kept whole with a `+` prefix. Countries gain `callingCode`,
+   `nationalNumberLength` and `trunkZero`.
+7. **Phone is unique per organization** by that key, deactivated customers included:
+   `409 CUSTOMER_PHONE_EXISTS` with `errors[0].meta.customerId`, so the till attaches the
+   existing customer. That also makes create safe to retry, so there is no `Idempotency-Key`.
+   A deleted customer's number is free again.
+8. The tax number is checked for the organization's country with `taxIdProblem`, like a
+   store's (BH/AE 15 digits, SA starts and ends with 3, IN GSTIN with check character).
+9. **Lookup:** `GET /customers/lookup?phone=` normalises the input the same way, needs at least
+   4 digits, and returns `match` (exact, active) and up to 4 `suggestions` (starts with, active,
+   shortest first, never the match). Not "contains" (Phase 4 review).
+10. **Import:** `POST /customers/import` takes 1–1000 `rows`. The body checks only the shape;
+    each row is validated on its own. The answer is a `200` with a result per row (`created`,
+    `duplicate` with the existing or earlier row's `customerId`, `invalid` with `errors`) and a
+    summary. Existing customers are never changed, so a file can be sent again. It is optional
+    for the frontend, which said one create per row was fine.
+11. Delete only a customer with no sales (`CUSTOMER_HAS_SALES`); deactivate otherwise. A
+    deactivated customer is hidden from the lookup and (4c) can't be attached to a new sale.
+12. **New permissions** (store scope, so they fit store roles): `customer:read` (cashier,
+    store_manager, accountant), `customer:create` (cashier, store_manager), `customer:manage`
+    (store_manager: edit, import, delete). org_admin gets all three from the catalog. Customer
+    routes check them held anywhere (`authorizeAnyScope`), like vendor reads.
+
+### Till
+
+13. `GET /stores/{storeId}/till/lookup?code=` uses the matching of `GET /products/lookup`
+    (barcode with or without hyphens, or SKU). Unknown: `404 PRODUCT_NOT_FOUND`. Deactivated
+    variant or product: `409 PRODUCT_INACTIVE`.
+14. `GET /stores/{storeId}/till/items` lists active variants of active products: search by
+    name, SKU or barcode prefix, `categoryId` with subcategories, sorted by name, page size 50.
+15. Both need `sale:create` at an active store and return `TillItem`: variant and product ids,
+    display name, `nameAr`, SKU, barcodes, type, unit, `hsnOrSac`, category, image, the
+    organization-wide `sellingPrice`, `pricesIncludeTax`, `taxPreference`, `taxRate` with its
+    components, `trackInventory` and `stockOnHand` at this store. **Never a cost.**
+
+- **Error codes:** new `REGISTER_NOT_FOUND`, `REGISTER_NAME_TAKEN`, `REGISTER_IN_USE` and
+  `REGISTER_HAS_OPEN_SHIFT` (both from 4b), `CUSTOMER_NOT_FOUND`, `CUSTOMER_PHONE_EXISTS`,
+  `CUSTOMER_HAS_SALES`, `PRODUCT_INACTIVE`. `PRODUCT_NOT_FOUND` is reused.
+
+### For the 4a-2 implementation
+
+- `Register` model (organization and store scoped; unique `{storeId, nameKey}` among
+  non-deleted). Create `Register 1` in the store-create transaction. Add a migration step for
+  existing stores and wire it into `npm run migrate`.
+- `Customer` model: `phoneKey` with a unique partial index `{organizationId, phoneKey}` (not
+  deleted). That index also serves the anchored starts-with lookup and the duplicate check.
+  Map an `11000` on it to `CUSTOMER_PHONE_EXISTS` with the existing id. Add `saleCount`
+  (`$inc` in 4c) and a `stateCode` derived on save.
+- Import: validate each row with `createCustomerSchema`, dedupe phone keys within the file, look
+  existing keys up in one `$in` query, then `insertMany({ ordered: false })`. Treat an `11000`
+  from a concurrent create as `duplicate`.
+- Till: reuse `lookupProduct`'s matching and `buildProductView`'s naming, and read
+  `StockLevel` for this store in one query per page. Read nothing cost-related.
+- 4b uses `claimRegister` on shift open, which is what blocks deleting a used register.
+
+### Deploy note
+
+Run `npm run migrate` (it includes `sync:system-roles`) so existing organizations' roles receive
+`customer:read`, `customer:create` and `customer:manage`.
+
+Testing:
+- `tests/unit/phase4a2Validator.test.ts` (14) covers:
+  - phone normalisation for BH, AE, SA and IN, foreign numbers, and partial input;
+  - the Swagger examples (including a valid GSTIN);
+  - customer, register and import rules.
+- `tests/integration/phase4a2Contract.test.ts` (7) covers:
+  - role seeding and the sync for existing organizations, and that cashiers still lack
+    `sale:refund`;
+  - the 404 preview routes;
+  - the OpenAPI paths and schemas, and that no till item property is a cost.

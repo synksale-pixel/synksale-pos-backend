@@ -1793,3 +1793,184 @@ export const DebitNoteListDataSchema = z
     pagination: PaginationSchema,
   })
   .openapi("DebitNoteListData");
+
+// ---------- Registers, customers and the till (Phase 4a-2) ----------
+
+export const RegisterSchema = z
+  .object({
+    _id: objectId("665f1c2e8a4b3c0012ab4200"),
+    id: objectId("665f1c2e8a4b3c0012ab4200"),
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    storeId: objectId("665f1c2e8a4b3c0012ab3400"),
+    name: z.string().openapi({ example: "Counter 2" }),
+    isActive: z.boolean().openapi({ example: true }),
+    createdAt: isoDate("2026-11-21T08:00:00.000Z"),
+    updatedAt: isoDate("2026-11-21T08:00:00.000Z"),
+  })
+  .openapi("Register", {
+    description:
+      "One till in a store. 4b adds the register's cash settings (opening float, drawer limit) and its current shift; read the object as open-ended.",
+  });
+
+export const RegisterDataSchema = z.object({ register: RegisterSchema }).openapi("RegisterData");
+
+export const RegisterListDataSchema = z
+  .object({
+    registers: z
+      .array(RegisterSchema)
+      .openapi({ description: "Every register of the store (a store has few), sorted by name. Not paginated." }),
+  })
+  .openapi("RegisterListData");
+
+export const CustomerSchema = z
+  .object({
+    _id: objectId("665f1c2e8a4b3c0012ab4300"),
+    id: objectId("665f1c2e8a4b3c0012ab4300"),
+    organizationId: objectId("665f1c2e8a4b3c0012ab3300"),
+    name: z.string().openapi({ example: "Fatima Al Khalifa" }),
+    phone: z.string().openapi({ description: "As entered.", example: "+973 3600 1234" }),
+    email: z.string().nullable().openapi({ example: "fatima@example.bh" }),
+    address: z
+      .object({
+        line1: z.string().nullable().openapi({ example: "Flat 21, Building 450" }),
+        line2: z.string().nullable().openapi({ example: "Road 1705, Block 317" }),
+        city: z.string().nullable().openapi({ example: "Manama" }),
+        state: z.string().nullable().openapi({ example: "Capital Governorate" }),
+        postalCode: z.string().nullable().openapi({ example: "317" }),
+      })
+      .openapi({ description: "Always present; unset fields are null." }),
+    taxRegistrationNumber: z.string().nullable().openapi({
+      description: "Normalised (no spaces or hyphens). Set: the customer gets a full tax invoice. null: a simplified invoice.",
+      example: null as unknown as string,
+    }),
+    stateCode: z.string().nullable().openapi({
+      description:
+        "India only: the GST state code from the GSTIN's first two digits. null without a GSTIN and outside India. Read-only. From 4c, a full tax invoice for a GSTIN from another state than the store is refused (IGST is not supported yet).",
+      example: null as unknown as string,
+    }),
+    notes: z.string().nullable().openapi({ example: "Prefers WhatsApp receipts." }),
+    isActive: z.boolean().openapi({ example: true }),
+    saleCount: z.number().int().openapi({
+      description: "Sales made to this customer (0 until 4c). A customer with sales cannot be deleted; deactivate them instead.",
+      example: 0,
+    }),
+    createdAt: isoDate("2026-11-21T08:00:00.000Z"),
+    updatedAt: isoDate("2026-11-21T08:00:00.000Z"),
+  })
+  .openapi("Customer");
+
+export const CustomerDataSchema = z.object({ customer: CustomerSchema }).openapi("CustomerData");
+
+export const CustomerListDataSchema = z
+  .object({
+    customers: z.array(CustomerSchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("CustomerListData");
+
+export const CustomerLookupDataSchema = z
+  .object({
+    match: CustomerSchema.nullable().openapi({
+      description: "The active customer whose normalised phone equals the input's exactly: attach them automatically. null when none.",
+    }),
+    suggestions: z.array(CustomerSchema).openapi({
+      description:
+        "Up to 4 other active customers whose normalised phone **starts with** the input's digits, shortest numbers first. Never includes `match`. Empty when none.",
+    }),
+  })
+  .openapi("CustomerLookupData");
+
+export const CustomerImportResultSchema = z
+  .object({
+    row: z.number().int().openapi({ description: "1-based position of the row in `rows`.", example: 2 }),
+    status: z.enum(["created", "duplicate", "invalid"]).openapi({
+      description: [
+        "- `created`: a new customer; `customerId` is it.",
+        "- `duplicate`: the phone belongs to an existing customer, or to an earlier row of this import. Nothing changed; `customerId` is that customer. Re-running the same file reports every row as a duplicate.",
+        "- `invalid`: the row failed validation; `errors` says why, in the usual `{ field, code, message }` form.",
+      ].join("\n"),
+      example: "created",
+    }),
+    customerId: objectId("665f1c2e8a4b3c0012ab4300").nullable().openapi({ description: "null for `invalid`." }),
+    errors: z
+      .array(z.object({ field: z.string().optional(), code: z.string().optional(), message: z.string().optional() }))
+      .openapi({ description: "Empty unless `invalid`.", example: [] }),
+  })
+  .openapi("CustomerImportResult");
+
+export const CustomerImportDataSchema = z
+  .object({
+    summary: z.object({
+      received: z.number().int().openapi({ example: 250 }),
+      created: z.number().int().openapi({ example: 241 }),
+      duplicate: z.number().int().openapi({ example: 6 }),
+      invalid: z.number().int().openapi({ example: 3 }),
+    }),
+    results: z.array(CustomerImportResultSchema).openapi({ description: "One per row, in row order." }),
+  })
+  .openapi("CustomerImportData");
+
+export const TillItemSchema = z
+  .object({
+    variantId: objectId("665f1c2e8a4b3c0012ab3801", "What a 4c sale line sends."),
+    productId: objectId("665f1c2e8a4b3c0012ab3800"),
+    name: z.string().openapi({
+      description: "The variant's display name: product name plus attribute values in the product's order.",
+      example: "Crew-neck T-shirt - M / Red",
+    }),
+    nameAr: z.string().nullable().openapi({ description: "The product's Arabic name, or null.", example: null as unknown as string }),
+    sku: z.string().nullable().openapi({ example: "TSH-M-RED" }),
+    barcodes: z.object({
+      upc: z.string().nullable().openapi({ example: null as unknown as string }),
+      ean: z.string().nullable().openapi({ example: "6291041500213" }),
+      isbn: z.string().nullable().openapi({ example: null as unknown as string }),
+    }),
+    type: z.enum(["goods", "service"]).openapi({ example: "goods" }),
+    unit: z.string().openapi({ example: "pcs" }),
+    hsnOrSac: z.string().nullable().openapi({ example: "61091000" }),
+    category: z
+      .object({ id: objectId("665f1c2e8a4b3c0012ab3700"), name: z.string().openapi({ example: "T-shirts" }) })
+      .nullable(),
+    imageUrl: z.string().nullable().openapi({ example: null as unknown as string }),
+    sellingPrice: money(
+      "5.000",
+      "The organization-wide selling price (decision 8: no per-store prices), as a decimal string. Includes tax when `pricesIncludeTax` is true."
+    ),
+    pricesIncludeTax: z.boolean().openapi({
+      description: "The organization's `settings.sales.pricesIncludeTax`, repeated so the till needs no extra call.",
+      example: true,
+    }),
+    taxPreference: z.enum(["standard", "zero_rated", "exempt", "out_of_scope"]).openapi({ example: "standard" }),
+    taxRate: z
+      .object({
+        id: objectId("665f1c2e8a4b3c0012ab3600"),
+        name: z.string().openapi({ example: "VAT 10%" }),
+        rate: z.number().openapi({ example: 10 }),
+        components: z.array(TaxComponentSchema).openapi({ description: "India: CGST + SGST halves. GCC: one VAT component." }),
+      })
+      .nullable()
+      .openapi({ description: "null unless `taxPreference` is standard. For display only: the sale (4c) works out tax on the server." }),
+    trackInventory: z.boolean().openapi({ example: true }),
+    stockOnHand: z.number().nullable().openapi({
+      description:
+        "Quantity on hand at THIS store. null when the product does not track inventory (always for services). Can be 0 or less; whether a sale may take it below 0 is a 4c rule.",
+      example: 12,
+    }),
+  })
+  .openapi("TillItem", {
+    description: "One sellable variant as the till sees it: price, tax and stock at this store. Never carries costs.",
+  });
+
+export const TillLookupDataSchema = z
+  .object({
+    item: TillItemSchema,
+    matchedOn: z.enum(["sku", "upc", "ean", "isbn"]).openapi({ example: "ean" }),
+  })
+  .openapi("TillLookupData");
+
+export const TillItemListDataSchema = z
+  .object({
+    items: z.array(TillItemSchema),
+    pagination: PaginationSchema,
+  })
+  .openapi("TillItemListData");
