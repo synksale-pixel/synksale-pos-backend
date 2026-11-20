@@ -10,6 +10,10 @@ export type PermissionKey =
   | "sale:create"
   | "sale:void"
   | "sale:refund"
+  // Customers
+  | "customer:read"
+  | "customer:create"
+  | "customer:manage"
   // Catalog
   | "product:create"
   | "product:read"
@@ -74,6 +78,31 @@ export const PERMISSION_CATALOG: PermissionDefinition[] = [
     key: "sale:refund",
     label: "Process Refunds",
     category: "Sales",
+    minScope: "store",
+  },
+
+  // ===== Customers (Phase 4a-2) =====
+  {
+    // Customers are shared by every store. Cashiers look them up by phone at the till.
+    key: "customer:read",
+    label: "View Customers",
+    category: "Customers",
+    minScope: "store",
+  },
+  {
+    // A cashier adds a new customer inline at the till. Kept apart from customer:manage so
+    // that the till can add customers without being able to edit or delete existing ones.
+    key: "customer:create",
+    label: "Add Customers",
+    category: "Customers",
+    minScope: "store",
+  },
+  {
+    // Edit, deactivate, delete and bulk import. Store scope so a store manager can fix a
+    // typo without an organization role; customers are still organization-wide.
+    key: "customer:manage",
+    label: "Edit/Import/Delete Customers",
+    category: "Customers",
     minScope: "store",
   },
 

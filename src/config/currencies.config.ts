@@ -39,6 +39,12 @@ export interface CountryDefinition {
   defaultTaxRates: SeedTaxRate[];
   /** First month (1-12) of the fiscal year: receipt numbers restart then. India April, else January. */
   fiscalYearStartMonth: number;
+  /** International dialling code without + (973 for Bahrain). Customer phone matching strips it. */
+  callingCode: string;
+  /** Digits in a national subscriber number, without any trunk 0 (8 in Bahrain, 10 in India). */
+  nationalNumberLength: number;
+  /** True where numbers are dialled with a leading 0 inside the country (AE, SA, IN). */
+  trunkZero: boolean;
   /** Payment methods enabled for a new organization in this country (cash is always enabled). */
   defaultPaymentMethods: SalePaymentMethod[];
 }
@@ -67,13 +73,13 @@ export const CURRENCIES: Record<string, CurrencyDefinition> = {
 };
 
 export const COUNTRIES: Record<string, CountryDefinition> = {
-  BH: { code: "BH", name: "Bahrain", currency: "BHD", defaultTaxRates: vat(10), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
-  KW: { code: "KW", name: "Kuwait", currency: "KWD", defaultTaxRates: [], fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
-  OM: { code: "OM", name: "Oman", currency: "OMR", defaultTaxRates: vat(5), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
-  AE: { code: "AE", name: "United Arab Emirates", currency: "AED", defaultTaxRates: vat(5), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
-  QA: { code: "QA", name: "Qatar", currency: "QAR", defaultTaxRates: [], fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
-  SA: { code: "SA", name: "Saudi Arabia", currency: "SAR", defaultTaxRates: vat(15), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
-  IN: { code: "IN", name: "India", currency: "INR", defaultTaxRates: [gst(18), gst(5)], fiscalYearStartMonth: 4, defaultPaymentMethods: ALL_PAYMENTS },
+  BH: { code: "BH", name: "Bahrain", currency: "BHD", callingCode: "973", nationalNumberLength: 8, trunkZero: false, defaultTaxRates: vat(10), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  KW: { code: "KW", name: "Kuwait", currency: "KWD", callingCode: "965", nationalNumberLength: 8, trunkZero: false, defaultTaxRates: [], fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  OM: { code: "OM", name: "Oman", currency: "OMR", callingCode: "968", nationalNumberLength: 8, trunkZero: false, defaultTaxRates: vat(5), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  AE: { code: "AE", name: "United Arab Emirates", currency: "AED", callingCode: "971", nationalNumberLength: 9, trunkZero: true, defaultTaxRates: vat(5), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  QA: { code: "QA", name: "Qatar", currency: "QAR", callingCode: "974", nationalNumberLength: 8, trunkZero: false, defaultTaxRates: [], fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  SA: { code: "SA", name: "Saudi Arabia", currency: "SAR", callingCode: "966", nationalNumberLength: 9, trunkZero: true, defaultTaxRates: vat(15), fiscalYearStartMonth: 1, defaultPaymentMethods: ALL_PAYMENTS },
+  IN: { code: "IN", name: "India", currency: "INR", callingCode: "91", nationalNumberLength: 10, trunkZero: true, defaultTaxRates: [gst(18), gst(5)], fiscalYearStartMonth: 4, defaultPaymentMethods: ALL_PAYMENTS },
 };
 
 export const DEFAULT_CURRENCY = "BHD";

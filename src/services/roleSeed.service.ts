@@ -39,6 +39,10 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "sale:create",
       "sale:void",
       "sale:refund",
+      // Customers (Phase 4a-2): looks them up, adds them, fixes typos and imports lists.
+      "customer:read",
+      "customer:create",
+      "customer:manage",
       "product:read",
       "inventory:read",
       "inventory:adjust",
@@ -60,7 +64,8 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
     slug: "cashier",
     name: "Cashier",
     scope: "store",
-    permissions: ["sale:create", "product:read", "report:view_store"],
+    // customer:read + customer:create: phone lookup and inline "Add customer" at the till (4a-2).
+    permissions: ["sale:create", "customer:read", "customer:create", "product:read", "report:view_store"],
   },
   {
     slug: "accountant",
@@ -73,6 +78,8 @@ const DEFAULT_ROLE_TEMPLATES: DefaultRoleTemplate[] = [
       "report:view_org",
       "report:view_store",
       "sale:refund",
+      // B2B customers' tax numbers, for full tax invoices and reports (4a-2).
+      "customer:read",
       "tax:manage",
       "product:read",
       "inventory:read",

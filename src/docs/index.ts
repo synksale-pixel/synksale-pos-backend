@@ -18,5 +18,8 @@ import "./purchaseOrder.openapi";
 import "./goodsReceipt.openapi";
 import "./bill.openapi";
 import "./vendorReturn.openapi";
+import "./register.openapi";
+import "./customer.openapi";
+import "./till.openapi";
 import "./platformAuth.openapi";
 import "./platformOrganization.openapi";
