@@ -2486,3 +2486,31 @@ Testing: `tests/integration/registers.test.ts` (18) covers the default register 
 store-create rollback, list/get, names, rename, deactivate, delete, access per role, deactivated
 stores, tenant isolation and the migration. `phase4a2Contract.test.ts` now expects only the till
 routes to answer 404. 1536 tests pass.
+
+---
+
+## 🧾 Sales — Phase 4a-2 till catalog reads implemented (2026-11-23)
+
+`GET /stores/{storeId}/till/lookup?code=` and `GET /stores/{storeId}/till/items` are live. With
+customers and registers this completes 4a-2: no contract-preview routes remain.
+
+- **Lookup** (`src/services/till.service.ts`): `findByCode` was extracted from `lookupProduct` in
+  `product.service.ts`, so the till and `GET /products/lookup` share the matching (barcode
+  with or without hyphens, then SKU). A deactivated variant or product is
+  `409 PRODUCT_INACTIVE` with `errors[0].meta = { productId, variantId, name }` (22-Nov note:
+  a one-tap reactivate for managers).
+- **Items:** one aggregate over active `ProductVariant`s, `$lookup` into active products (scoped
+  by hand: the tenant plugin does not reach inside `$lookup`), search on product `nameKey`,
+  variant `skuKey` or `scanCodes` prefix, category with descendants, sorted by product name
+  then variant order, `$facet` for count and page. Default page size 50.
+- **TillItem** is built from selected fields only (no cost or last purchase is read): price
+  from `sellingPriceMinor`, `pricesIncludeTax` from `salesSettings`, the tax rate with its
+  components (standard items only), and `stockOnHand` from this store's `StockLevel` (null when
+  the product doesn't track inventory).
+- **Access:** mounted at `/stores/:storeId/till` with `scopeToStore` (the store must be active)
+  and `authorize("sale:create")`.
+
+Testing: `tests/integration/till.test.ts` (18) covers the lookup (shape, per-store stock, hyphens,
+SKU, not found, inactive product and variant with meta), the item list (active only, search,
+category with subcategories, paging, pricesIncludeTax, zero-rated), no costs, and access.
+`phase4a2Contract.test.ts` dropped its 404 preview test. 1552 tests pass.

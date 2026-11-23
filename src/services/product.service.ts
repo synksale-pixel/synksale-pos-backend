@@ -744,6 +744,16 @@ export async function getProduct(organizationId: string, productId: string, opti
  * still returned so the POS can explain why they cannot be sold.
  */
 export async function lookupProduct(organizationId: string, code: string, options: ViewOptions = FULL_VIEW) {
+  const { product, variant, matchedOn } = await findByCode(organizationId, code);
+  return { product: await buildProductView(organizationId, product, undefined, options), variantId: variant._id, matchedOn };
+}
+
+/**
+ * The variant (and its product) a scanned barcode or typed SKU names: an exact UPC/EAN/ISBN
+ * (hyphens ignored) first, then a case-insensitive SKU. Active or not; the caller decides.
+ * Shared by `GET /products/lookup` and the till's lookup.
+ */
+export async function findByCode(organizationId: string, code: string) {
   const text = code.trim();
   if (!text) {
     throw validationError("code", "Required");
@@ -766,7 +776,7 @@ export async function lookupProduct(organizationId: string, code: string, option
     throw ApiError.coded(404, "PRODUCT_NOT_FOUND", `No product matches '${text}'.`);
   }
 
-  return { product: await buildProductView(organizationId, product, undefined, options), variantId: variant._id, matchedOn };
+  return { product, variant, matchedOn };
 }
 
 // ==========================================
