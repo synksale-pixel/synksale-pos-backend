@@ -1,6 +1,5 @@
 /**
- * Purpose: Swagger for Phase 4a-2 customers (contract preview: documented for frontend sign-off;
- * the routes answer 404 until the implementation ships).
+ * Purpose: Swagger for Phase 4a-2 customers.
  */
 import { registry, z } from "../config/openapi.registry";
 import {
@@ -26,8 +25,6 @@ const tags = ["Customers"];
 const base = `${API}/customers`;
 const path = `${base}/{customerId}`;
 
-const PREVIEW =
-  "**Contract preview (Phase 4a-2):** documented for frontend sign-off; the route answers 404 until the implementation ships.";
 
 const customerIdParam = z.object({
   customerId: z.string().openapi({
@@ -97,11 +94,11 @@ const notFound404 = errorResponse(
   "CUSTOMER_NOT_FOUND"
 );
 const phoneExists409 = errorResponse(
-  "Another customer already has this phone number (compared normalised: `+973 3600 1234` = `36001234`). Code `CUSTOMER_PHONE_EXISTS`; `errors[0].meta.customerId` is the existing customer, so the till can attach them instead. Deactivated customers count too (reactivate them).",
+  "Another customer already has this phone number (compared normalised: `+973 3600 1234` = `36001234`). Code `CUSTOMER_PHONE_EXISTS`; `errors[0].meta` names the existing customer (`customerId`, `name`, `isActive`), so the till can offer `Attach {name}?` (or `Reactivate {name}?` when `isActive` is false) instead. Deactivated customers count too.",
   "A customer with this phone number already exists.",
   409,
   "CUSTOMER_PHONE_EXISTS",
-  [{ field: "phone", code: "CUSTOMER_PHONE_EXISTS", message: "A customer with this phone number already exists.", meta: { customerId: "665f1c2e8a4b3c0012ab4300" } }]
+  [{ field: "phone", code: "CUSTOMER_PHONE_EXISTS", message: "A customer with this phone number already exists.", meta: { customerId: "665f1c2e8a4b3c0012ab4300", isActive: true, name: "Fatima Al Khalifa" } }]
 );
 
 const COUNTRY_RULES =
@@ -115,7 +112,7 @@ registry.registerPath({
   path: base,
   tags,
   summary: "List customers",
-  description: [PREVIEW, "", readNote, "", "Paginated, newest first. For the till's phone search use `GET /customers/lookup`, which is built for typing speed."].join("\n"),
+  description: [readNote, "", "Paginated, newest first. For the till's phone search use `GET /customers/lookup`, which is built for typing speed."].join("\n"),
   security,
   request: { query: listCustomersQuerySchema },
   responses: {
@@ -136,8 +133,6 @@ registry.registerPath({
   tags,
   summary: "Find a customer by phone at the till",
   description: [
-    PREVIEW,
-    "",
     readNote,
     "",
     "Built to run as the cashier types (indexed on the normalised phone). The input is normalised like a stored phone: digits only, your country's calling code and (AE, SA, IN) the trunk 0 removed.",
@@ -166,7 +161,7 @@ registry.registerPath({
   path,
   tags,
   summary: "Get a customer",
-  description: [PREVIEW, "", readNote].join("\n"),
+  description: [readNote].join("\n"),
   security,
   request: { params: customerIdParam },
   responses: {
@@ -188,8 +183,6 @@ registry.registerPath({
   tags,
   summary: "Add a customer",
   description: [
-    PREVIEW,
-    "",
     createNote,
     "",
     "Only `name` and `phone` are required. From the till, pre-fill `phone` with what the cashier typed in the lookup.",
@@ -235,8 +228,6 @@ registry.registerPath({
   tags,
   summary: "Import customers in bulk",
   description: [
-    PREVIEW,
-    "",
     manageNote,
     "",
     `Up to ${CUSTOMER_IMPORT_MAX_ROWS} rows per call, each with the fields of a create. **Rows are handled one by one and partial success is normal**: the response is \`200\` with a result per row (\`created\`, \`duplicate\` or \`invalid\`) and a summary. Only a malformed body (no \`rows\`, an empty or oversized list) is a \`400\`.`,
@@ -268,8 +259,6 @@ registry.registerPath({
   tags,
   summary: "Update a customer",
   description: [
-    PREVIEW,
-    "",
     manageNote,
     "",
     "Send only what changes; `null` clears an optional field. Changing `phone` is checked for duplicates like a create. Clearing `taxRegistrationNumber` makes future sales simplified invoices; past sales keep the invoice they were issued with (4c snapshots the customer).",
@@ -301,8 +290,6 @@ registry.registerPath({
   tags,
   summary: "Delete a customer",
   description: [
-    PREVIEW,
-    "",
     manageNote,
     "",
     "Only a customer with no sales (`saleCount` 0). Otherwise `409 CUSTOMER_HAS_SALES`: deactivate them instead. A deleted customer's phone number is free to be used again.",

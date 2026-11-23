@@ -45,6 +45,7 @@ import { Bill } from "../src/models/bill.model";
 import { VendorPayment } from "../src/models/vendorPayment.model";
 import { VendorReturn } from "../src/models/vendorReturn.model";
 import { DebitNote } from "../src/models/debitNote.model";
+import { Customer } from "../src/models/customer.model";
 
 const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslint/no-explicit-any
   Organization,
@@ -69,6 +70,7 @@ const MODELS: mongoose.Model<any>[] = [ // eslint-disable-line @typescript-eslin
   VendorPayment,
   VendorReturn,
   DebitNote,
+  Customer,
 ];
 
 async function run() {
