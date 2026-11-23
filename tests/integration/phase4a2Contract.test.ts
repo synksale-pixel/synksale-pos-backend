@@ -1,6 +1,6 @@
 /**
  * Purpose: Phase 4a-2 contract wiring that the validator unit tests cannot see: the customer
- * permissions' role seeding and sync, the register and till contract-preview routes (404 until implemented; customers are live) and the
+ * permissions' role seeding and sync, the till contract-preview routes (404 until implemented; customers and registers are live) and the
  * Swagger document.
  */
 
@@ -11,10 +11,8 @@ import { User } from "../../src/models/user.model";
 import { Role } from "../../src/models/role.model";
 import { seedDefaultRolesForOrganization, syncSystemRolePermissions } from "../../src/services/roleSeed.service";
 import { generateAccessToken } from "../../src/services/auth.service";
-import { registerExample } from "../../src/docs/register.openapi";
 
 const KEYS = ["customer:read", "customer:create", "customer:manage"];
-const REGISTER_ID = "665f1c2e8a4b3c0012ab4200";
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 async function setup(slug: string) {
@@ -111,11 +109,6 @@ describe("contract preview routes", () => {
     const storeId = store.body.data.store._id;
 
     const calls = [
-      request.get(`/api/v1/stores/${storeId}/registers`),
-      request.post(`/api/v1/stores/${storeId}/registers`).send(registerExample),
-      request.get(`/api/v1/stores/${storeId}/registers/${REGISTER_ID}`),
-      request.patch(`/api/v1/stores/${storeId}/registers/${REGISTER_ID}`).send(registerExample),
-      request.delete(`/api/v1/stores/${storeId}/registers/${REGISTER_ID}`),
       request.get(`/api/v1/stores/${storeId}/till/lookup?code=6291041500213`),
       request.get(`/api/v1/stores/${storeId}/till/items`),
     ];
