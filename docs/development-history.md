@@ -2455,3 +2455,34 @@ Testing: `tests/integration/customers.test.ts` (32) covers create, phone forms a
 numbers, tax number rules (BH, IN with `stateCode`), lookup, list search and filters, update,
 delete, import, per-role permissions and tenant isolation. `phase4a2Contract.test.ts` no longer
 expects customer routes to answer 404. 1518 tests pass.
+
+---
+
+## 🧾 Sales — Phase 4a-2 registers implemented (2026-11-23)
+
+The **Registers** endpoints are live (the till is still a contract preview):
+`GET/POST /stores/{storeId}/registers`, `GET/PATCH/DELETE /stores/{storeId}/registers/{registerId}`.
+
+- **Model** `src/models/register.model.ts`: organization+store scoped. `name` is unique per store
+  among non-deleted registers, case-insensitively (`nameKey`, `REGISTER_NAME_TAKEN`), so a deleted
+  name is reusable. `shiftCount` (hidden) is what 4b's `claimRegister` increments on shift open.
+- **"Register 1" with every store:** `createStore` now creates the store and its register in one
+  transaction (`createDefaultRegister`), so a failed store create leaves nothing behind.
+- **Migration** `npm run migrate:registers` (part of `npm run migrate`): gives every non-deleted
+  store that has never had a register its "Register 1". A store that deleted its registers is
+  left alone, so re-runs are no-ops.
+- **Access:** mounted before the store stock router with `scopeToStoreAllowInactive`, so a
+  deactivated store can be set up before it opens. Reads need only access to the store; writes
+  need `store:configure` there.
+- **Delete:** a conditional `updateOne` on `shiftCount` not > 0; otherwise `409 REGISTER_IN_USE`
+  with `meta.shiftCount`. `REGISTER_HAS_OPEN_SHIFT` on deactivate arrives with 4b.
+- `Register` was added to `scripts/syncIndexes.ts`.
+
+### Deploy note
+
+Run `npm run migrate`: it builds the register index and gives existing stores "Register 1".
+
+Testing: `tests/integration/registers.test.ts` (18) covers the default register and the
+store-create rollback, list/get, names, rename, deactivate, delete, access per role, deactivated
+stores, tenant isolation and the migration. `phase4a2Contract.test.ts` now expects only the till
+routes to answer 404. 1536 tests pass.

@@ -15,6 +15,7 @@ import { IUser } from "../models/user.model";
 import { hasOrganizationScopeRole } from "./permission.service";
 import { assertCountryMatchesCurrency } from "./organization.service";
 import { hasSaleNumbers } from "./documentNumber.service";
+import { createDefaultRegister } from "./register.service";
 import { ApiError } from "../utils/ApiError";
 import { taxIdProblem } from "../utils/taxId";
 import { logger } from "../config/logger.config";
@@ -156,29 +157,41 @@ export async function createStore(
   );
   if (input.invoicePrefix) await assertPrefixFree(organizationId, input.invoicePrefix);
 
-  let store: StoreDocument;
+  // The store and its "Register 1" are created together, so the till works without set-up.
+  let store!: StoreDocument;
+  const session = await mongoose.startSession();
   try {
-    store = (await Store.create({
-      organizationId: new mongoose.Types.ObjectId(organizationId),
-      name: input.name,
-      code,
-      address: { ...input.address, stateCode: input.address.stateCode ?? null },
-      countryCode: input.countryCode,
-      timezone: input.timezone,
-      legalName: input.legalName ?? null,
-      legalNameAr: input.legalNameAr ?? null,
-      taxRegistrationNumber: input.taxRegistrationNumber ?? null,
-      phone: input.phone ?? null,
-      email: input.email ?? null,
-      invoicePrefix: input.invoicePrefix ?? null,
-      receipt: {
-        headerText: input.receipt?.headerText ?? null,
-        footerText: input.receipt?.footerText ?? null,
-      },
-    })) as StoreDocument;
+    await session.withTransaction(async () => {
+      [store] = (await Store.create(
+        [
+          {
+            organizationId: new mongoose.Types.ObjectId(organizationId),
+            name: input.name,
+            code,
+            address: { ...input.address, stateCode: input.address.stateCode ?? null },
+            countryCode: input.countryCode,
+            timezone: input.timezone,
+            legalName: input.legalName ?? null,
+            legalNameAr: input.legalNameAr ?? null,
+            taxRegistrationNumber: input.taxRegistrationNumber ?? null,
+            phone: input.phone ?? null,
+            email: input.email ?? null,
+            invoicePrefix: input.invoicePrefix ?? null,
+            receipt: {
+              headerText: input.receipt?.headerText ?? null,
+              footerText: input.receipt?.footerText ?? null,
+            },
+          },
+        ],
+        { session }
+      )) as StoreDocument[];
+      await createDefaultRegister(store.organizationId, store._id, session);
+    });
   } catch (error) {
     if (isDuplicatePrefix(error)) throw prefixTaken(input.invoicePrefix!);
     throw error;
+  } finally {
+    await session.endSession();
   }
 
   logger.info(`Store created: ${store._id} (${code}) org=${organizationId} by user=${actorUserId}`);

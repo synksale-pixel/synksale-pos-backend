@@ -1,6 +1,5 @@
 /**
- * Purpose: Swagger for Phase 4a-2 registers (contract preview: documented for frontend sign-off;
- * the routes answer 404 until the implementation ships).
+ * Purpose: Swagger for Phase 4a-2 registers.
  */
 import { registry, z } from "../config/openapi.registry";
 import { createRegisterSchema, listRegistersQuerySchema, updateRegisterSchema } from "../validators/register.validator";
@@ -11,9 +10,6 @@ const security = [{ tenantBearerAuth: [] }];
 const tags = ["Registers"];
 const base = `${API}/stores/{storeId}/registers`;
 const path = `${base}/{registerId}`;
-
-export const PREVIEW =
-  "**Contract preview (Phase 4a-2):** documented for frontend sign-off; the route answers 404 until the implementation ships.";
 
 const storeIdParam = z.object({
   storeId: z.string().openapi({ description: "Store ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3400" }),
@@ -61,7 +57,7 @@ registry.registerPath({
   path: base,
   tags,
   summary: "List a store's registers",
-  description: [PREVIEW, "", readNote, "", "All registers, sorted by name, not paginated (a store has few). The till shows `isActive=true` ones in its picker and remembers the choice per device; 4b's shift open and 4c's sale send that `registerId`.", "", NEW_STORE_NOTE].join("\n"),
+  description: [readNote, "", "All registers, sorted by name, not paginated (a store has few). The till shows `isActive=true` ones in its picker and remembers the choice per device; 4b's shift open and 4c's sale send that `registerId`.", "", NEW_STORE_NOTE].join("\n"),
   security,
   request: { params: storeIdParam, query: listRegistersQuerySchema },
   responses: {
@@ -82,7 +78,7 @@ registry.registerPath({
   path,
   tags,
   summary: "Get a register",
-  description: [PREVIEW, "", readNote].join("\n"),
+  description: [readNote].join("\n"),
   security,
   request: { params: registerParams },
   responses: {
@@ -103,7 +99,7 @@ registry.registerPath({
   path: base,
   tags,
   summary: "Add a register",
-  description: [PREVIEW, "", writeNote, "", "No `Idempotency-Key`: a retried create hits `REGISTER_NAME_TAKEN` instead of making a second register."].join("\n"),
+  description: [writeNote, "", "No `Idempotency-Key`: a retried create hits `REGISTER_NAME_TAKEN` instead of making a second register."].join("\n"),
   security,
   request: {
     params: storeIdParam,
@@ -129,8 +125,6 @@ registry.registerPath({
   tags,
   summary: "Rename, deactivate or reactivate a register",
   description: [
-    PREVIEW,
-    "",
     writeNote,
     "",
     "Send only what changes. A renamed register keeps its id, so past sales still point at it (and show its current name).",
@@ -162,8 +156,6 @@ registry.registerPath({
   tags,
   summary: "Delete a register",
   description: [
-    PREVIEW,
-    "",
     writeNote,
     "",
     "Only a register that has never had a shift: once 4b ships, a used register is `409 REGISTER_IN_USE` (sales and shifts keep pointing at it). Deactivate it instead.",

@@ -19,7 +19,8 @@
     "migrate:vendor-names": "tsx scripts/migratePreferredVendorNames.ts",
     "migrate:phase4a1": "tsx scripts/migratePhase4a1.ts",
     "migrate:receipt-billable": "tsx scripts/migrateReceiptBillable.ts",
-    "migrate": "npm run sync:indexes -- --apply && npm run sync:system-roles && npm run migrate:vendor-names && npm run migrate:phase4a1 && npm run migrate:receipt-billable"
+    "migrate:registers": "tsx scripts/migrateRegisters.ts",
+    "migrate": "npm run sync:indexes -- --apply && npm run sync:system-roles && npm run migrate:vendor-names && npm run migrate:phase4a1 && npm run migrate:receipt-billable && npm run migrate:registers"
   },
   "repository": {
     "type": "git",
