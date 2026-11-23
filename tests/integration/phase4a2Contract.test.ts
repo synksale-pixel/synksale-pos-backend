@@ -1,7 +1,6 @@
 /**
  * Purpose: Phase 4a-2 contract wiring that the validator unit tests cannot see: the customer
- * permissions' role seeding and sync, the till contract-preview routes (404 until implemented; customers and registers are live) and the
- * Swagger document.
+ * permissions' role seeding and sync, and the Swagger document.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -90,34 +89,6 @@ describe("customer permissions", () => {
 
     const res = await request.post("/api/v1/roles").set(auth(admin)).send({ name: "Front desk", scope: "store", permissions: KEYS });
     expect(res.status).toBe(201);
-  });
-});
-
-describe("contract preview routes", () => {
-  it("answer the router's 404 until implemented", async () => {
-    const store = await request
-      .post("/api/v1/stores")
-      .set(auth(admin))
-      .send({
-        name: "Seef",
-        code: "SEEF-1",
-        address: { line1: "Road 2", city: "Manama", state: "Capital", country: "Bahrain", postalCode: "324" },
-        countryCode: "BH",
-        timezone: "Asia/Bahrain",
-      });
-    expect(store.status, JSON.stringify(store.body)).toBe(201);
-    const storeId = store.body.data.store._id;
-
-    const calls = [
-      request.get(`/api/v1/stores/${storeId}/till/lookup?code=6291041500213`),
-      request.get(`/api/v1/stores/${storeId}/till/items`),
-    ];
-    for (const call of calls) {
-      const res = await call.set(auth(admin));
-      expect(res.status, JSON.stringify(res.body)).toBe(404);
-      expect(res.body.code).toBeUndefined();
-      expect(res.body.message).not.toBe("Store not found.");
-    }
   });
 });
 

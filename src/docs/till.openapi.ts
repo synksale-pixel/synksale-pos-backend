@@ -1,6 +1,5 @@
 /**
- * Purpose: Swagger for Phase 4a-2 till catalog reads (contract preview: documented for frontend
- * sign-off; the routes answer 404 until the implementation ships).
+ * Purpose: Swagger for Phase 4a-2 till catalog reads.
  */
 import { registry, z } from "../config/openapi.registry";
 import { tillItemsQuerySchema, tillLookupQuerySchema } from "../validators/till.validator";
@@ -10,9 +9,6 @@ import { API, errorResponse, json, server500, TENANT_AUTH_401, validation400 } f
 const security = [{ tenantBearerAuth: [] }];
 const tags = ["Till"];
 const base = `${API}/stores/{storeId}/till`;
-
-const PREVIEW =
-  "**Contract preview (Phase 4a-2):** documented for frontend sign-off; the route answers 404 until the implementation ships.";
 
 const storeIdParam = z.object({
   storeId: z.string().openapi({ description: "Store ID (24-char hex ObjectId).", example: "665f1c2e8a4b3c0012ab3400" }),
@@ -37,8 +33,6 @@ registry.registerPath({
   tags,
   summary: "Scan: find the item for a barcode or SKU",
   description: [
-    PREVIEW,
-    "",
     NOTE,
     "",
     "Exact match on a UPC/EAN/ISBN (hyphens ignored) or a SKU (case-insensitive), the same matching as `GET /products/lookup`. Barcodes and SKUs are unique in the organization, so a code finds at most one variant.",
@@ -63,10 +57,16 @@ registry.registerPath({
       "PRODUCT_NOT_FOUND"
     ),
     409: errorResponse(
-      "The code belongs to a deactivated variant or product. Code `PRODUCT_INACTIVE`.",
+      "The code belongs to a deactivated variant or product. Code `PRODUCT_INACTIVE`; `errors[0].meta` has `productId`, `variantId` and `name`, so a manager can reactivate it in one tap: `PATCH /products/{productId}/activate` or `PATCH /products/{productId}/variants/{variantId}/activate` (needs `product:update`).",
       "'Crew-neck T-shirt - M / Red' is deactivated and cannot be sold.",
       409,
-      "PRODUCT_INACTIVE"
+      "PRODUCT_INACTIVE",
+      [
+        {
+          code: "PRODUCT_INACTIVE",
+          meta: { productId: "665f1c2e8a4b3c0012ab3800", variantId: "665f1c2e8a4b3c0012ab3801", name: "Crew-neck T-shirt - M / Red" },
+        },
+      ]
     ),
     500: server500,
   },
@@ -78,8 +78,6 @@ registry.registerPath({
   tags,
   summary: "Browse and search sellable items",
   description: [
-    PREVIEW,
-    "",
     NOTE,
     "",
     "One row per variant (a T-shirt in 6 sizes is 6 rows), sorted by name, paginated (default 50). For the item grid, category tabs and the search box. For a scanner, use `/till/lookup`.",
