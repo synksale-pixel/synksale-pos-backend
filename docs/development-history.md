@@ -2414,3 +2414,44 @@ Testing:
     `sale:refund`;
   - the 404 preview routes;
   - the OpenAPI paths and schemas, and that no till item property is a cost.
+
+---
+
+## 🧾 Sales — Phase 4a-2 customers implemented (2026-11-23)
+
+The **Customers** endpoints are live (registers and the till are still contract previews):
+`GET/POST /customers`, `GET /customers/lookup?phone=`, `POST /customers/import`,
+`GET/PATCH/DELETE /customers/{customerId}`. Built as contracted, plus the 22-Nov frontend note.
+
+- **Model** `src/models/customer.model.ts`: organization-scoped. `phoneKey` (the national number,
+  `src/utils/phone.ts`) is unique per organization among non-deleted customers, so deactivated
+  customers keep their number and deleted ones free it. `nameKey` backs the search. `stateCode`
+  (India, from the GSTIN) and `phoneKey` are set by the service, which knows the organization's
+  country. `saleCount` starts at 0 (4c increments it).
+- **Duplicates:** `409 CUSTOMER_PHONE_EXISTS` with `errors[0].meta = { customerId, isActive, name }`
+  (22-Nov note: the till shows "Attach/Reactivate {name}?"). Checked before saving, and a lost
+  race on the unique index (`11000`) is mapped to the same error naming the winner.
+- **Lookup:** `match` is the active exact key; `suggestions` are up to 4 other active customers
+  whose key starts with the input, sorted by key length then key (aggregate with `$strLenCP`).
+  Fewer than 4 digits after normalising is `400` on `phone`.
+- **List:** newest first. `search` matches a prefix of any word of the name, the normalised phone
+  (4+ digits), an email prefix or a TRN prefix. Filters `isActive`, `hasTaxRegistrationNumber`.
+- **Delete:** a conditional `updateOne` on `saleCount` not > 0, so a 4c sale incrementing it can't
+  interleave; otherwise `409 CUSTOMER_HAS_SALES` with `meta.saleCount`.
+- **Import:** each row is validated with `createCustomerSchema` plus the country's tax number
+  rule; phone keys are deduped within the file and against existing customers in one `$in`
+  query; new rows get their `_id` before writing (so an in-file duplicate can name it) and are
+  written with one `insertMany({ ordered: false })`. A row that loses to a concurrent create
+  is reported as a `duplicate` of the winner, and in-file duplicates of it are re-pointed.
+- **Permissions:** `authorizeAnyScope` with `customer:read` (reads, lookup), `customer:create`
+  (create) and `customer:manage` (edit, import, delete).
+- `Customer` was added to `scripts/syncIndexes.ts`.
+
+### Deploy note
+
+Run `npm run sync:indexes -- --apply` (part of `npm run migrate`) to build the customer indexes.
+
+Testing: `tests/integration/customers.test.ts` (32) covers create, phone forms and meta, foreign
+numbers, tax number rules (BH, IN with `stateCode`), lookup, list search and filters, update,
+delete, import, per-role permissions and tenant isolation. `phase4a2Contract.test.ts` no longer
+expects customer routes to answer 404. 1518 tests pass.

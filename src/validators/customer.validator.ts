@@ -40,7 +40,7 @@ const phoneField = z
   .openapi({
     description: [
       "Stored as entered, and matched by its normalised form: digits only, with your country's calling code and (AE, SA, IN) the trunk 0 removed. So `+973 3600 1234`, `0097336001234` and `36001234` are the same number. A number with another country's code is kept whole.",
-      "**Unique within your organization** by that normalised form: a second customer with the same number is `409 CUSTOMER_PHONE_EXISTS`, and `errors[0].meta.customerId` names the existing customer so the till can attach them instead.",
+      "**Unique within your organization** by that normalised form: a second customer with the same number is `409 CUSTOMER_PHONE_EXISTS`, and `errors[0].meta` names the existing customer (`customerId`, `name`, `isActive`) so the till can attach them instead.",
     ].join("\n\n"),
     example: "+973 3600 1234",
   });
